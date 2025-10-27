@@ -31,7 +31,24 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Verify compliance with `.specify/memory/constitution.md`:
+
+### Principle 1: Documentation & Code Clarity
+- [ ] Documentation plan includes API docs for public interfaces
+- [ ] Complex algorithms/logic identified for explanatory comments
+- [ ] Comments will explain "why" and context, not just "what"
+
+### Principle 2: Smart Architecture & Design
+- [ ] Architecture choices justified by concrete current needs
+- [ ] Simpler alternatives considered and documented if rejected
+- [ ] No premature abstractions (wait for 2-3 use cases before abstracting)
+- [ ] YAGNI applied: complexity deferred until proven necessary
+
+### Principle 3: Pragmatic Testing (80/20 Rule)
+- [ ] Test strategy focuses on critical user journeys (contract/integration)
+- [ ] High-impact business logic identified for testing
+- [ ] NOT targeting 100% coverage - only high-value tests planned
+- [ ] Tests planned are maintainable and fast
 
 ## Project Structure
 

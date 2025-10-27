@@ -1,0 +1,88 @@
+# Lukas the Bear Slack Chatbot
+# Docker Compose configuration for DEVELOPMENT
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: "3.9"
+
+services:
+  lukas-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: lukas-bear-bot-dev
+    env_file:
+      - .env
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      # Mount config as read-only
+      - ./config:/app/config:ro
+      # Mount source code for live development
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    environment:
+      # Development mode features
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # MCP server endpoints
+      - MCP_WEB_SEARCH_URL=http://web-search-mcp-dev:9765/sse
+    depends_on:
+      web-search-mcp-dev:
+        condition: service_healthy
+    networks:
+      - lukas-network-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # MCP Server: Web Search (Development)
+  # Provides web search capabilities via Brave/Bing/DuckDuckGo
+  # No API keys required - uses browser automation
+  web-search-mcp-dev:
+    build:
+      context: docker/mcp-servers/web-search
+      dockerfile: Dockerfile
+    container_name: web-search-mcp-dev
+    environment:
+      - MAX_CONTENT_LENGTH=500000
+      - DEFAULT_TIMEOUT=6000
+      - MAX_BROWSERS=3
+      - BROWSER_TYPES=chromium,firefox
+      # Development: Enable verbose logging
+      - NODE_ENV=development
+      - MCP_PORT=9765
+    networks:
+      - lukas-network-dev
+    restart: unless-stopped
+    # Resource limits to prevent browser memory issues
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9765 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Development: Expose port for direct testing
+    ports:
+      - "9765:9765"
+
+networks:
+  lukas-network-dev:
+    driver: bridge

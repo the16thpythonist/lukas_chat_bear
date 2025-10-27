@@ -1,0 +1,85 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment files
+.env
+.env.*
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Database (exclude from Docker image, use volumes)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backup-*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+README.md
+CHANGELOG.md
+docs/
+specs/
+
+# Tests
+tests/
+.coverage
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Config (sensitive)
+config/config.yml
+
+# Lock files (will be regenerated)
+uv.lock

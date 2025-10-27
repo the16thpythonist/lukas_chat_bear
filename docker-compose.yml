@@ -1,0 +1,72 @@
+# Lukas the Bear Slack Chatbot
+# Docker Compose configuration
+
+version: "3.9"
+
+services:
+  lukas-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: lukas-bear-bot
+    env_file:
+      - .env
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      # Mount config as read-only
+      - ./config:/app/config:ro
+    environment:
+      # MCP server endpoints
+      - MCP_WEB_SEARCH_URL=http://web-search-mcp:8080/sse
+    depends_on:
+      web-search-mcp:
+        condition: service_healthy
+    networks:
+      - lukas-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # MCP Server: Web Search
+  # Provides web search capabilities via Brave/Bing/DuckDuckGo
+  # No API keys required - uses browser automation
+  web-search-mcp:
+    build:
+      context: docker/mcp-servers/web-search
+      dockerfile: Dockerfile
+    container_name: web-search-mcp
+    environment:
+      - MAX_CONTENT_LENGTH=500000
+      - DEFAULT_TIMEOUT=6000
+      - MAX_BROWSERS=3
+      - BROWSER_TYPES=chromium,firefox
+    networks:
+      - lukas-network
+    restart: unless-stopped
+    # Resource limits to prevent browser memory issues
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  lukas-network:
+    driver: bridge
