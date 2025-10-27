@@ -1,130 +1,127 @@
 """
-Command handler for admin commands and triggers.
+Command handler - Simplified for MCP-based architecture.
 
-Handles special commands like on-demand image generation.
+All commands are now handled via LLM agent with MCP tools.
+This file maintains backwards compatibility and helper functions.
 """
 
 import re
-from typing import Optional, Tuple
-
 from src.repositories.team_member_repo import TeamMemberRepository
 from src.utils.database import get_db
 from src.utils.logger import logger
 
 
-async def handle_generate_image_command(event: dict, say, client):
-    """
-    Handle on-demand image generation command from admins.
+# ===== HELPER FUNCTIONS =====
 
-    Command format: "generate image [theme] [to #channel]"
-    Examples:
-      - "generate image" (seasonal, current channel)
-      - "generate image halloween" (specific theme, current channel)
-      - "generate image to #random" (seasonal, specified channel)
-      - "generate image halloween to #random" (theme + channel)
+
+def get_user_from_slack_id(slack_user_id: str, db_session):
+    """
+    Get TeamMember from Slack user ID.
 
     Args:
-        event: Slack event data
-        say: Slack say function for responding
-        client: Slack client
-    """
-    try:
-        user_id = event.get("user")
-        text = event.get("text", "").strip()
-        channel = event.get("channel")
-
-        # Check if user is admin
-        with get_db() as db:
-            team_member_repo = TeamMemberRepository(db)
-            team_member = team_member_repo.get_by_slack_user_id(user_id)
-
-            if not team_member or not team_member.is_admin:
-                await say("Sorry, only admins can trigger image generation!")
-                logger.warning(f"Non-admin user {user_id} tried to generate image")
-                return
-
-        # Parse command
-        theme, target_channel = parse_generate_image_command(text)
-
-        # Use current channel if not specified
-        if not target_channel:
-            target_channel = channel
-
-        # Acknowledge command
-        await say(f"Generating a bear image{f' with {theme} theme' if theme else ''}... :bear:")
-
-        # Import image service (avoid circular imports)
-        from src.services.image_service import image_service
-
-        if not image_service:
-            await say("Image service not available. Please check configuration.")
-            logger.error("Image service not initialized")
-            return
-
-        # Generate and post image
-        result = await image_service.generate_and_post(
-            channel_id=target_channel,
-            theme=theme,
-            occasion=None,
-        )
-
-        if result and result.status == "posted":
-            if target_channel != channel:
-                await say(f"Image posted to <#{target_channel}>!")
-            logger.info(f"Admin {user_id} triggered image generation: {result.id}")
-        elif result and result.status == "failed":
-            await say(f"Failed to generate image: {result.error_message}")
-            logger.error(f"Image generation failed: {result.error_message}")
-        else:
-            await say("Failed to generate or post image. Please check logs.")
-            logger.error("Image generation failed (unknown error)")
-
-    except Exception as e:
-        logger.error(f"Error handling generate image command: {e}")
-        await say("An error occurred while generating the image.")
-
-
-def parse_generate_image_command(text: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Parse generate image command to extract theme and channel.
-
-    Args:
-        text: Command text (e.g., "generate image halloween to #random")
+        slack_user_id: Slack user ID (e.g., U123ABC)
+        db_session: Database session
 
     Returns:
-        Tuple of (theme, channel_id)
+        TeamMember or None if not found
     """
-    # Normalize text
-    text = text.lower().strip()
+    repo = TeamMemberRepository(db_session)
+    return repo.get_by_slack_id(slack_user_id)
 
-    # Remove "generate image" prefix
-    if text.startswith("generate image"):
-        text = text[len("generate image"):].strip()
-    elif text.startswith("gen image"):
-        text = text[len("gen image"):].strip()
 
-    # Extract channel (format: "to #channel" or "to C123456")
-    channel_id = None
-    channel_match = re.search(r"to\s+[#<]?([a-zA-Z0-9_-]+)[>]?", text)
-    if channel_match:
-        channel_id = channel_match.group(1)
-        # Remove channel part from text
-        text = text[:channel_match.start()] + text[channel_match.end():]
-        text = text.strip()
+# ===== CONFIRMATION MESSAGE FORMATTER =====
+# Kept for backwards compatibility with other parts of the codebase
 
-    # Remaining text is theme (if any)
-    theme = text.strip() if text.strip() else None
 
-    # Validate theme (must be reasonable)
-    if theme and len(theme) > 50:
-        theme = None  # Too long, ignore
+class ConfirmationFormatter:
+    """Format confirmation messages with Lukas's persona."""
 
-    return theme, channel_id
+    @staticmethod
+    def post_success(channel_name: str) -> str:
+        """Format success message for post command."""
+        return f"✅ Done! I posted your message to #{channel_name}. 🐻"
+
+    @staticmethod
+    def post_failure(channel_name: str, reason: str) -> str:
+        """Format failure message for post command."""
+        return (
+            f"❌ Oops! I couldn't post to #{channel_name}. {reason}\n\n"
+            f"Make sure I'm invited to that channel! 🐻"
+        )
+
+    @staticmethod
+    def reminder_success(when: str, task: str) -> str:
+        """Format success message for reminder command."""
+        return (
+            f"⏰ Got it! I'll remind you {when} to: {task}\n\n"
+            f"I won't forget! 🐻"
+        )
+
+    @staticmethod
+    def reminder_failure(reason: str) -> str:
+        """Format failure message for reminder command."""
+        return (
+            f"❌ I couldn't set that reminder. {reason}\n\n"
+            f"Try asking me like: 'remind me in 30 minutes to check the build' 🐻"
+        )
+
+    @staticmethod
+    def config_success(setting: str, value: str) -> str:
+        """Format success message for config command."""
+        setting_names = {
+            "dm_interval": "random DM interval",
+            "thread_probability": "thread engagement probability",
+            "image_interval": "image posting interval",
+        }
+        friendly_name = setting_names.get(setting, setting)
+        return (
+            f"⚙️ Configuration updated! Set {friendly_name} to: {value}\n\n"
+            f"The changes are now active. 🐻"
+        )
+
+    @staticmethod
+    def config_failure(setting: str, reason: str) -> str:
+        """Format failure message for config command."""
+        return (
+            f"❌ Couldn't update {setting}. {reason}\n\n"
+            f"Please check the value and try again! 🐻"
+        )
+
+    @staticmethod
+    def permission_denied(command_type: str) -> str:
+        """Format permission denied message."""
+        return (
+            f"🚫 Sorry, that action requires admin privileges.\n\n"
+            f"Contact an admin if you need help! 🐻"
+        )
+
+    @staticmethod
+    def unknown_command(text: str) -> str:
+        """Format unknown command message."""
+        return (
+            f"🤔 Hmm, I'm not sure I understand that.\n\n"
+            f"Just ask me naturally - I can help with posting messages, setting reminders, "
+            f"getting team info, and more! 🐻"
+        )
+
+    @staticmethod
+    def error_message(error_details: str) -> str:
+        """Format general error message."""
+        return (
+            f"😅 Oops! Something went wrong: {error_details}\n\n"
+            f"Let me know if you need help troubleshooting! 🐻"
+        )
+
+
+# ===== APP MENTION HANDLER =====
 
 
 async def handle_app_mention(event: dict, say, client):
     """
-    Handle @mentions of the bot for commands.
+    Handle @mentions of the bot.
+
+    All mentions are now processed through the LLM agent with MCP tools.
+    The LLM will automatically decide whether to use command tools or respond conversationally.
 
     Args:
         event: Slack event data
@@ -146,21 +143,27 @@ async def handle_app_mention(event: dict, say, client):
         # Format: <@U123ABC> text here
         text = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
 
-        # Check for image generation command
-        if text.lower().startswith(("generate image", "gen image", "post image")):
-            await handle_generate_image_command(event, say, client)
-            return
+        # Get user from database
+        with get_db() as db:
+            user = get_user_from_slack_id(user_id, db)
 
-        # Default: treat as conversational message
-        # (This will be expanded in Phase 6 with more commands)
+            if not user:
+                await say("I don't recognize you yet! Send me a DM first so I can get to know you. 🐻")
+                return
+
+        # Pass to message handler (which uses LLM agent with MCP tools)
         from src.handlers.message_handler import handle_direct_message
 
-        # Treat mention as DM for now
+        # The LLM agent will automatically use MCP tools for commands
+        # like "remind me...", "post to #channel...", "team info", etc.
         await handle_direct_message(event, say, client)
 
     except Exception as e:
-        logger.error(f"Error handling app mention: {e}")
-        await say("Sorry, I had trouble understanding that command.")
+        logger.error(f"Error handling app mention: {e}", exc_info=True)
+        await say("Sorry, I had trouble processing that request. 🐻")
+
+
+# ===== HANDLER REGISTRATION =====
 
 
 def register_command_handlers(app):
@@ -174,4 +177,4 @@ def register_command_handlers(app):
     async def handle_mention_event(event, say, client):
         await handle_app_mention(event, say, client)
 
-    logger.info("Command handlers registered")
+    logger.info("Command handlers registered (using LLM+MCP architecture)")

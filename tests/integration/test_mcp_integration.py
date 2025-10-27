@@ -41,15 +41,21 @@ class TestMCPConnectionIntegration:
             service = LLMAgentService()
 
             # Mock the MCP lifecycle to simulate successful connection
-            async def mock_mcp_lifecycle(url):
-                # Simulate tool discovery
-                mock_tool = Mock()
-                mock_tool.name = "test-tool"
-                mock_tool.description = "A test tool"
+            async def mock_mcp_lifecycle(url, server_name, ready_event):
+                # Simulate tool discovery - use real StructuredTool for agent creation
+                from langchain_core.tools import StructuredTool
 
-                service.mcp_tools = [Mock()]  # Simulate tool registered
-                service.agent = Mock()  # Simulate agent created
-                service._mcp_ready.set()
+                async def dummy_tool(**kwargs):
+                    return "test result"
+
+                mock_tool = StructuredTool.from_function(
+                    name="test_tool",
+                    description="A test tool",
+                    coroutine=dummy_tool
+                )
+
+                service.mcp_tools = [mock_tool]  # Simulate tool registered
+                ready_event.set()  # Signal ready
 
             service._mcp_connection_lifecycle = AsyncMock(
                 side_effect=mock_mcp_lifecycle
@@ -179,3 +185,111 @@ class TestMessageHandlerIntegration:
             from src.services.llm_service import llm_service
 
             assert service == llm_service
+
+
+class TestSlackOperationsMCPServer:
+    """
+    Integration tests for slack-operations MCP server.
+
+    Tests the command execution via MCP tools.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not os.getenv("MCP_SLACK_OPS_URL"),
+        reason="Slack operations MCP server not configured, skipping live test",
+    )
+    async def test_slack_ops_mcp_server_connection(self):
+        """
+        LIVE TEST: Connect to slack-operations MCP server if available.
+
+        This test only runs when MCP_SLACK_OPS_URL is set.
+        Validates that the MCP server starts and exposes tools.
+
+        To run: docker-compose -f docker-compose.dev.yml up -d
+        """
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+
+        slack_ops_url = os.getenv("MCP_SLACK_OPS_URL", "http://localhost:9766/sse")
+
+        print(f"\nConnecting to slack-operations MCP server at {slack_ops_url}...")
+
+        async with sse_client(url=slack_ops_url) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # List tools
+                tools_list = await session.list_tools()
+                tools = tools_list.tools
+
+                # Verify expected tools are available
+                tool_names = [t.name for t in tools]
+
+                print(f"\nDiscovered {len(tools)} slack operations tools:")
+                for tool in tools:
+                    print(f"  - {tool.name}: {tool.description[:80]}...")
+
+                # Assert expected tools exist
+                assert "post_message_to_channel" in tool_names
+                assert "create_reminder" in tool_names
+                assert "get_team_info" in tool_names
+                assert "update_bot_config" in tool_names
+                assert "generate_and_post_image" in tool_names
+
+                assert len(tools) == 5, f"Expected 5 tools, got {len(tools)}"
+
+    @pytest.mark.asyncio
+    async def test_llm_agent_discovers_slack_ops_tools(self):
+        """
+        Test that LLM agent service discovers slack-operations tools.
+
+        User scenario: Bot starts → Connects to both MCP servers →
+        Has access to both web search AND slack operations tools.
+        """
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "MCP_WEB_SEARCH_URL": "http://test-web-search:9765/sse",
+                "MCP_SLACK_OPS_URL": "http://test-slack-ops:9766/sse",
+            },
+        ):
+            service = LLMAgentService()
+
+            # Mock the MCP lifecycle for both servers
+            from langchain_core.tools import StructuredTool
+
+            async def dummy_tool(**kwargs):
+                return "test result"
+
+            async def mock_mcp_lifecycle(url, server_name, ready_event):
+                # Simulate different tools from different servers
+                if "web-search" in server_name:
+                    tool_names = ["full_web_search", "get_web_search_summaries"]
+                elif "slack-ops" in server_name or "slack-operations" in server_name:
+                    tool_names = ["post_message_to_channel", "create_reminder", "get_team_info"]
+                else:
+                    tool_names = []
+
+                # Add to service tools as real StructuredTool instances
+                for tool_name in tool_names:
+                    structured_tool = StructuredTool.from_function(
+                        name=tool_name,
+                        description=f"Test tool: {tool_name}",
+                        coroutine=dummy_tool
+                    )
+                    service.mcp_tools.append(structured_tool)
+
+                ready_event.set()
+
+            service._mcp_connection_lifecycle = AsyncMock(
+                side_effect=mock_mcp_lifecycle
+            )
+
+            # Initialize MCP (should connect to both servers)
+            await service.initialize_mcp()
+
+            # Should have tools from both servers
+            assert len(service.mcp_tools) >= 5, f"Expected at least 5 total tools, got {len(service.mcp_tools)}"
+            assert service.agent is not None, "Agent should be created with all tools"

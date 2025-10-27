@@ -43,7 +43,7 @@ class TestLLMAgentServiceFallback:
         original_call_agent = service._call_agent
         call_count = {"agent": 0, "fallback": 0}
 
-        async def mock_call_agent(user_message, chat_history=None, use_tools=True):
+        async def mock_call_agent(user_message, chat_history=None, use_tools=True, user_context=None):
             if use_tools:
                 call_count["agent"] += 1
                 raise Exception("Agent error")
@@ -109,7 +109,7 @@ class TestLLMAgentServiceFallback:
         # Mock _call_agent to return empty then valid
         call_count = {"calls": 0}
 
-        async def mock_call_agent(user_message, chat_history=None, use_tools=True):
+        async def mock_call_agent(user_message, chat_history=None, use_tools=True, user_context=None):
             call_count["calls"] += 1
             if call_count["calls"] == 1:
                 return ""  # Empty on first call (with tools)
@@ -178,14 +178,14 @@ class TestLLMAgentServiceInitialization:
 
             await service.initialize_mcp()
 
-            # Background task should be created
-            assert service._mcp_task is not None
-            assert isinstance(service._mcp_task, asyncio.Task)
+            # Background tasks should be created (multi-server architecture)
+            assert len(service._mcp_tasks) > 0
+            assert all(isinstance(task, asyncio.Task) for task in service._mcp_tasks)
 
     @pytest.mark.asyncio
     async def test_cleanup_cancels_background_task(self):
         """
-        Cleanup properly cancels MCP background task.
+        Cleanup properly cancels MCP background tasks.
 
         Protects: Graceful bot shutdown without hanging tasks.
         Scenario: Bot restart or shutdown.
@@ -193,17 +193,20 @@ class TestLLMAgentServiceInitialization:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             service = LLMAgentService()
 
-            # Create a mock background task
+            # Create mock background tasks (multi-server architecture)
             async def mock_task():
                 await asyncio.sleep(100)  # Long-running
 
-            service._mcp_task = asyncio.create_task(mock_task())
+            service._mcp_tasks = [
+                asyncio.create_task(mock_task()),
+                asyncio.create_task(mock_task())
+            ]
 
-            # Cleanup should cancel it
+            # Cleanup should cancel all tasks
             await service.cleanup()
 
-            # Task should be cancelled
-            assert service._mcp_task.cancelled() or service._mcp_task.done()
+            # All tasks should be cancelled or done
+            assert all(task.cancelled() or task.done() for task in service._mcp_tasks)
 
 
 class TestTokenEstimation:

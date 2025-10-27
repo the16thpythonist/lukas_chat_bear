@@ -29,6 +29,12 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       # MCP server endpoints
       - MCP_WEB_SEARCH_URL=http://web-search-mcp-dev:9765/sse
+      - MCP_SLACK_OPS_URL=http://localhost:9766/sse
+      - MCP_SLACK_OPS_PORT=9766
+      - MCP_SLACK_OPS_HOST=0.0.0.0
+    ports:
+      # Expose MCP server port for LLM agent access
+      - "9766:9766"
     depends_on:
       web-search-mcp-dev:
         condition: service_healthy

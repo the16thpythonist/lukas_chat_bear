@@ -46,7 +46,8 @@ class TestConfigurationRetrieval:
 
         Protects against: Missing configurations, incorrect data retrieval.
         """
-        all_configs = config_repo.get_all_configs()
+        # Use get_all_configs_dict() to get dictionary of key-value pairs
+        all_configs = config_repo.get_all_configs_dict()
 
         # Seeded database has 3 configs
         assert len(all_configs) >= 3

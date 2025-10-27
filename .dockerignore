@@ -58,7 +58,7 @@ docker-compose*.yml
 .dockerignore
 
 # Documentation
-README.md
+# README.md is needed for package installation
 CHANGELOG.md
 docs/
 specs/

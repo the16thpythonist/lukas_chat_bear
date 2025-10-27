@@ -74,12 +74,12 @@ class LLMAgentService:
             api_key=api_key
         )
 
-        # MCP connection management
-        self.mcp_session: Optional[ClientSession] = None
+        # MCP connection management (support multiple servers)
+        self.mcp_sessions: Dict[str, ClientSession] = {}  # server_name -> session
         self.mcp_tools: List[StructuredTool] = []
         self.agent = None  # LangGraph agent
-        self._mcp_task: Optional[asyncio.Task] = None  # Background task for MCP lifecycle
-        self._mcp_ready = asyncio.Event()  # Signal when MCP is ready
+        self._mcp_tasks: List[asyncio.Task] = []  # Background tasks for MCP lifecycle
+        self._mcp_ready_events: List[asyncio.Event] = []  # Signals when each MCP is ready
 
         # Circuit breaker for MCP connections
         self.circuit_breaker = CircuitBreaker(
@@ -89,91 +89,122 @@ class LLMAgentService:
 
         logger.info(f"LLM Agent service initialized with model {self.model}")
 
-    async def _mcp_connection_lifecycle(self, url: str) -> None:
+    async def _mcp_connection_lifecycle(self, url: str, server_name: str, ready_event: asyncio.Event) -> None:
         """
-        Background task that manages MCP connection lifecycle.
+        Background task that manages MCP connection lifecycle for a specific server.
 
         Keeps the SSE context manager alive throughout bot lifetime.
         This prevents the "exit cancel scope in different task" error.
+
+        Args:
+            url: MCP server URL
+            server_name: Name of the MCP server (for logging and tracking)
+            ready_event: Event to signal when this server is ready
         """
         try:
-            logger.info(f"Starting MCP connection to {url}...")
+            logger.info(f"Starting MCP connection to {server_name} at {url}...")
 
             # Enter SSE context and keep it alive
             async with sse_client(url=url) as (read_stream, write_stream):
                 # Enter MCP session context
                 async with ClientSession(read_stream, write_stream) as session:
-                    self.mcp_session = session
+                    self.mcp_sessions[server_name] = session
 
                     # Initialize session
                     await session.initialize()
-                    logger.info("MCP session initialized successfully")
+                    logger.info(f"{server_name} MCP session initialized successfully")
 
                     # List and register tools
                     tools_list = await session.list_tools()
-                    logger.info(f"Found {len(tools_list.tools)} MCP tools")
+                    logger.info(f"Found {len(tools_list.tools)} tools from {server_name}")
 
-                    self.mcp_tools = []
+                    # Add tools to global list
                     for mcp_tool in tools_list.tools:
-                        langchain_tool = self._create_langchain_tool(mcp_tool)
+                        langchain_tool = self._create_langchain_tool(mcp_tool, server_name)
                         self.mcp_tools.append(langchain_tool)
-                        logger.info(f"  - {mcp_tool.name}: {mcp_tool.description}")
+                        logger.info(f"  [{server_name}] {mcp_tool.name}: {mcp_tool.description}")
 
-                    # Create agent
-                    self._create_agent()
-                    logger.info(f"MCP agent initialized with {len(self.mcp_tools)} tools")
+                    logger.info(f"{server_name} registered {len(tools_list.tools)} tools")
 
-                    # Signal that MCP is ready
-                    self._mcp_ready.set()
+                    # Signal that this MCP server is ready
+                    ready_event.set()
 
                     # Keep connection alive indefinitely
                     # This task will run until cancelled (bot shutdown)
                     try:
                         await asyncio.Event().wait()  # Wait forever
                     except asyncio.CancelledError:
-                        logger.info("MCP connection lifecycle task cancelled")
+                        logger.info(f"{server_name} MCP connection lifecycle task cancelled")
                         raise
 
         except httpx.ReadTimeout:
             # Expected timeout on idle SSE connection - this is non-critical
-            logger.debug("MCP SSE connection timed out (expected for idle connections)")
-            self._mcp_ready.set()  # Tools are already registered, this is fine
+            logger.debug(f"{server_name} MCP SSE connection timed out (expected for idle connections)")
+            ready_event.set()  # Tools are already registered, this is fine
         except Exception as e:
-            logger.error(f"MCP connection lifecycle error: {e}", exc_info=True)
-            logger.warning("Agent will run without MCP tools")
-            self._mcp_ready.set()  # Unblock initialization even on error
+            logger.error(f"{server_name} MCP connection lifecycle error: {e}", exc_info=True)
+            logger.warning(f"Agent will run without {server_name} tools")
+            ready_event.set()  # Unblock initialization even on error
 
     async def initialize_mcp(self) -> None:
         """
-        Initialize MCP client with SSE transport in background task.
+        Initialize MCP clients with SSE transport in background tasks.
 
-        Creates a long-lived background task that maintains the MCP connection.
+        Connects to multiple MCP servers:
+        - web-search-mcp: Web search capabilities
+        - slack-operations-mcp: Slack command operations
+
+        Creates long-lived background tasks that maintain MCP connections.
         This prevents async context cleanup errors by keeping context managers
         alive in the same task where they were created.
         """
-        web_search_url = os.getenv("MCP_WEB_SEARCH_URL")
+        # Configure MCP servers to connect to
+        mcp_servers = []
 
-        if not web_search_url:
-            logger.warning("MCP_WEB_SEARCH_URL not configured, agent will run without tools")
+        web_search_url = os.getenv("MCP_WEB_SEARCH_URL")
+        if web_search_url:
+            mcp_servers.append(("web-search", web_search_url))
+
+        slack_ops_url = os.getenv("MCP_SLACK_OPS_URL")
+        if slack_ops_url:
+            mcp_servers.append(("slack-operations", slack_ops_url))
+
+        if not mcp_servers:
+            logger.warning("No MCP servers configured, agent will run without MCP tools")
             return
 
         try:
-            # Create background task for MCP lifecycle
-            self._mcp_task = asyncio.create_task(
-                self._mcp_connection_lifecycle(web_search_url)
-            )
+            logger.info(f"Initializing {len(mcp_servers)} MCP server(s)...")
 
-            # Wait for MCP to be ready (with timeout)
+            # Create background task for each MCP server
+            for server_name, server_url in mcp_servers:
+                ready_event = asyncio.Event()
+                self._mcp_ready_events.append(ready_event)
+
+                task = asyncio.create_task(
+                    self._mcp_connection_lifecycle(server_url, server_name, ready_event)
+                )
+                self._mcp_tasks.append(task)
+
+            # Wait for all MCP servers to be ready (with timeout)
             try:
-                await asyncio.wait_for(self._mcp_ready.wait(), timeout=30.0)
-                if self.agent:
-                    logger.info("MCP initialization complete")
+                await asyncio.wait_for(
+                    asyncio.gather(*[event.wait() for event in self._mcp_ready_events]),
+                    timeout=30.0
+                )
+
+                # Create agent with all tools from all servers
+                if self.mcp_tools:
+                    self._create_agent()
+                    logger.info(f"MCP initialization complete: {len(self.mcp_tools)} total tools from {len(mcp_servers)} server(s)")
                 else:
-                    logger.warning("MCP initialization completed but no agent created")
+                    logger.warning("MCP initialization completed but no tools registered")
+
             except asyncio.TimeoutError:
                 logger.error("MCP initialization timed out after 30s")
-                if self._mcp_task:
-                    self._mcp_task.cancel()
+                # Cancel all tasks
+                for task in self._mcp_tasks:
+                    task.cancel()
 
         except Exception as e:
             logger.error(f"Failed to initialize MCP: {e}", exc_info=True)
@@ -216,12 +247,13 @@ class LLMAgentService:
         model_name = f"{tool_name.replace('-', '_').title()}Args"
         return create_model(model_name, **field_definitions)
 
-    def _create_langchain_tool(self, mcp_tool) -> StructuredTool:
+    def _create_langchain_tool(self, mcp_tool, server_name: str) -> StructuredTool:
         """
         Convert an MCP tool to a LangChain tool with proper schema.
 
         Args:
             mcp_tool: MCP tool definition
+            server_name: Name of the MCP server providing this tool
 
         Returns:
             LangChain StructuredTool wrapper
@@ -241,9 +273,15 @@ class LLMAgentService:
         async def tool_func(**kwargs) -> str:
             """Execute the MCP tool."""
             try:
-                logger.debug(f"Calling MCP tool '{mcp_tool.name}' with arguments: {kwargs}")
+                logger.debug(f"Calling MCP tool '{mcp_tool.name}' from {server_name} with arguments: {kwargs}")
 
-                result = await self.mcp_session.call_tool(
+                # Get the session for this server
+                session = self.mcp_sessions.get(server_name)
+                if not session:
+                    logger.error(f"No MCP session found for server '{server_name}'")
+                    return f"Error: MCP server '{server_name}' not connected"
+
+                result = await session.call_tool(
                     name=mcp_tool.name,
                     arguments=kwargs
                 )
@@ -326,7 +364,8 @@ class LLMAgentService:
         self,
         user_message: str,
         chat_history: List = None,
-        use_tools: bool = True
+        use_tools: bool = True,
+        user_context: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Call agent or LLM with circuit breaker protection.
@@ -335,6 +374,7 @@ class LLMAgentService:
             user_message: User's message text
             chat_history: Previous conversation messages
             use_tools: Whether to enable tool use
+            user_context: Optional dict with user_id and user_name for tool calls
 
         Returns:
             AI response text
@@ -343,9 +383,24 @@ class LLMAgentService:
             if use_tools and self.agent:
                 # Use LangGraph agent with tools
                 messages = chat_history or []
+
+                # Inject user context as system message if provided
+                if user_context:
+                    context_msg = (
+                        f"\n\nCurrent conversation context:\n"
+                        f"- User: {user_context['user_name']}\n"
+                        f"- Slack User ID: {user_context['user_id']}\n\n"
+                        f"IMPORTANT: When using tools that require 'user_id' parameter "
+                        f"(like generate_and_post_image, update_bot_config, create_reminder), "
+                        f"use the Slack User ID provided above. DO NOT ask the user for their ID."
+                    )
+                    messages.insert(0, SystemMessage(content=context_msg))
+
                 messages.append(HumanMessage(content=user_message))
 
                 logger.info(f"Calling agent with {len(messages)} messages, use_tools={use_tools}")
+                if user_context:
+                    logger.info(f"User context: {user_context['user_name']} ({user_context['user_id']})")
                 logger.info(f"User message: {user_message[:100]}...")
 
                 result = await self.agent.ainvoke({"messages": messages})
@@ -399,6 +454,8 @@ class LLMAgentService:
         self,
         conversation_messages: List[Message],
         user_message: str,
+        user_id: Optional[str] = None,
+        user_name: Optional[str] = None,
     ) -> str:
         """
         Generate AI response with tool access and fallback.
@@ -406,6 +463,8 @@ class LLMAgentService:
         Args:
             conversation_messages: Previous messages in conversation
             user_message: Latest user message
+            user_id: Slack user ID for tool calls (optional)
+            user_name: User's display name for context (optional)
 
         Returns:
             AI-generated response or fallback
@@ -414,8 +473,21 @@ class LLMAgentService:
             # Build conversation context
             chat_history = self._build_conversation_context(conversation_messages)
 
+            # Build user context for tool calls
+            user_context = None
+            if user_id:
+                user_context = {
+                    "user_id": user_id,
+                    "user_name": user_name or "Unknown"
+                }
+
             # Call agent (we're already in an async context, just await)
-            response = await self._call_agent(user_message, chat_history, use_tools=True)
+            response = await self._call_agent(
+                user_message,
+                chat_history,
+                use_tools=True,
+                user_context=user_context
+            )
 
             if not response or not response.strip():
                 logger.warning("Agent returned empty response, using fallback")
@@ -431,7 +503,21 @@ class LLMAgentService:
             try:
                 logger.info("Attempting fallback without tools...")
                 chat_history = self._build_conversation_context(conversation_messages)
-                response = await self._call_agent(user_message, chat_history, use_tools=False)
+
+                # Build user context for fallback
+                user_context = None
+                if user_id:
+                    user_context = {
+                        "user_id": user_id,
+                        "user_name": user_name or "Unknown"
+                    }
+
+                response = await self._call_agent(
+                    user_message,
+                    chat_history,
+                    use_tools=False,
+                    user_context=user_context
+                )
 
                 if not response or not response.strip():
                     raise ValueError("Empty response from fallback")
@@ -468,15 +554,21 @@ class LLMAgentService:
     async def cleanup(self):
         """Clean up MCP connections gracefully."""
         try:
-            if self._mcp_task and not self._mcp_task.done():
-                logger.info("Cancelling MCP background task...")
-                self._mcp_task.cancel()
-                try:
-                    await self._mcp_task
-                except asyncio.CancelledError:
-                    logger.debug("MCP task cancelled successfully")
-                except Exception as e:
-                    logger.warning(f"Error during MCP task cancellation: {e}")
+            if self._mcp_tasks:
+                logger.info(f"Cancelling {len(self._mcp_tasks)} MCP background task(s)...")
+
+                for task in self._mcp_tasks:
+                    if not task.done():
+                        task.cancel()
+
+                # Wait for all tasks to complete
+                results = await asyncio.gather(*self._mcp_tasks, return_exceptions=True)
+
+                for i, result in enumerate(results):
+                    if isinstance(result, asyncio.CancelledError):
+                        logger.debug(f"MCP task {i} cancelled successfully")
+                    elif isinstance(result, Exception):
+                        logger.warning(f"Error during MCP task {i} cancellation: {result}")
 
             logger.info("MCP connections closed")
         except Exception as e:

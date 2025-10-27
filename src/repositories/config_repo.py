@@ -123,7 +123,58 @@ class ConfigurationRepository:
         logger.info(f"Set configuration {key} = {value_str} (type: {value_type})")
         return config
 
-    def get_all_configs(self) -> dict[str, Any]:
+    def update_config(
+        self,
+        key: str,
+        value: str,
+        value_type: str,
+        updated_by_user_id: Optional[str] = None,
+    ) -> Configuration:
+        """
+        Update an existing configuration value.
+
+        Args:
+            key: Configuration key
+            value: New value (as string)
+            value_type: Type of value ("string", "integer", "float", "boolean", "json")
+            updated_by_user_id: ID of user making the change
+
+        Returns:
+            Updated Configuration object
+        """
+        config = self.get_config(key)
+
+        if config:
+            # Update existing
+            config.value = value
+            config.value_type = value_type
+            config.updated_by_user_id = updated_by_user_id
+        else:
+            # Create new
+            config = Configuration(
+                key=key,
+                value=value,
+                value_type=value_type,
+                description=f"Configuration for {key}",
+                updated_by_user_id=updated_by_user_id,
+            )
+            self.db.add(config)
+
+        self.db.commit()
+        self.db.refresh(config)
+        logger.info(f"Updated configuration {key} = {value} (type: {value_type})")
+        return config
+
+    def get_all_configs(self) -> list[Configuration]:
+        """
+        Get all configurations.
+
+        Returns:
+            List of Configuration objects
+        """
+        return self.db.query(Configuration).all()
+
+    def get_all_configs_dict(self) -> dict[str, Any]:
         """
         Get all configurations as a dictionary.
 

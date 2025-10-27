@@ -132,11 +132,15 @@ async def handle_direct_message(event: dict, say, client, logger_inst=logger):
                 response_text = await service.generate_response(
                     conversation_messages=recent_messages,
                     user_message=text,
+                    user_id=user_id,
+                    user_name=display_name,
                 )
             else:
                 response_text = service.generate_response(
                     conversation_messages=recent_messages,
                     user_message=text,
+                    user_id=user_id,
+                    user_name=display_name,
                 )
 
             # Validate response is not empty
@@ -279,11 +283,15 @@ async def handle_app_mention(event: dict, say, client, logger_inst=logger):
                 response_text = await service.generate_response(
                     conversation_messages=recent_messages,
                     user_message=text,
+                    user_id=user_id,
+                    user_name=display_name,
                 )
             else:
                 response_text = service.generate_response(
                     conversation_messages=recent_messages,
                     user_message=text,
+                    user_id=user_id,
+                    user_name=display_name,
                 )
 
             # Validate response is not empty

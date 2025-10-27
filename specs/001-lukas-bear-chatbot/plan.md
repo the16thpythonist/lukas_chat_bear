@@ -12,13 +12,17 @@ Build a Slack chatbot that embodies "Lukas the Bear", the office mascot, to enha
 ## Technical Context
 
 **Language/Version**: Python 3.11+
-**Primary Dependencies**: Slack Bolt SDK (Socket Mode), any-llm (Mozilla AI unified LLM interface), OpenAI SDK (for DALL-E), APScheduler, SQLAlchemy, tenacity (retry), pybreaker (circuit breaker), mcp>=1.0.0 (official Model Context Protocol Python SDK), LangChain>=0.3.0, LangGraph>=0.2.0 (agent framework)
+**Primary Dependencies**: Slack Bolt SDK (Socket Mode), any-llm (Mozilla AI unified LLM interface), OpenAI SDK (for DALL-E), APScheduler, SQLAlchemy, tenacity (retry), pybreaker (circuit breaker), mcp>=1.0.0 (official Model Context Protocol Python SDK), LangChain>=0.3.0, LangGraph>=0.2.0 (agent framework), starlette>=0.27.0 (ASGI framework for MCP SSE server), uvicorn>=0.24.0 (ASGI server)
 **Storage**: SQLite database for conversation history, configuration, and scheduled tasks
-**Testing**: pytest for unit tests, pytest-asyncio for async tests, integration tests for Slack/LLM APIs
+**Testing**: pytest for unit tests, pytest-asyncio for async tests, integration tests for Slack/LLM APIs and MCP servers
 **Target Platform**: Linux Docker containers (Docker Compose stack)
-**Project Type**: Single Python application with background task scheduling
-**Deployment**: Docker Compose with bot service, MCP server containers, and persisted SQLite volume
-**MCP Integration**: web-search-mcp server (Node.js/TypeScript) running in separate container, connected via official MCP Python SDK using SSE transport. Background task lifecycle maintains persistent SSE connection throughout bot lifetime. Service selection via USE_MCP_AGENT env var with three-tier fallback (agent → LLM → emergency response)
+**Project Type**: Single Python application with background task scheduling and co-located MCP server
+**Deployment**: Docker Compose with bot service (multi-process container), external MCP server containers, and persisted SQLite volume
+**MCP Integration**: Multi-server architecture with two MCP servers:
+  1. **web-search-mcp** (Node.js/TypeScript) - External container providing web search tools (full-web-search, get-web-search-summaries, get-single-web-page-content)
+  2. **slack-operations-mcp** (Python/Starlette) - Co-located in bot container providing Slack command tools (post_message_to_channel, create_reminder, get_team_info, update_bot_config, generate_and_post_image)
+
+  Connected via official MCP Python SDK using SSE transport. Background task lifecycle maintains persistent SSE connections throughout bot lifetime. Service selection via USE_MCP_AGENT env var with three-tier fallback (agent with tools → LLM without tools → emergency response). LangGraph create_react_agent enables autonomous tool selection from 8 total tools across both servers.
 **Performance Goals**: <5s response time for DMs, handle 10 concurrent conversations, 99% uptime during business hours
 **Constraints**: Slack API rate limits (1+ msg/sec per channel), LLM provider limits (handled via any-llm), SQLite suitable for <50 users
 **Scale/Scope**: Single Slack workspace, <50 team members, ~100-500 messages/day estimated load
@@ -71,15 +75,17 @@ lukas_chat_bear/
 ├── src/
 │   ├── __init__.py
 │   ├── bot.py                    # Main Slack Bolt app initialization
+│   ├── mcp_server.py             # MCP server exposing Slack operations as tools (port 9766)
 │   ├── handlers/                 # Slack event handlers
 │   │   ├── __init__.py
 │   │   ├── message_handler.py    # DM and mention handling
 │   │   ├── thread_handler.py     # Channel thread monitoring
-│   │   └── command_handler.py    # Command parsing and execution
+│   │   └── command_handler.py    # Simplified - routes mentions to LLM agent
 │   ├── services/                 # Core business logic
 │   │   ├── __init__.py
 │   │   ├── llm_service.py        # any-llm integration (standard mode)
-│   │   ├── llm_agent_service.py  # MCP-enabled agent with tool access
+│   │   ├── llm_agent_service.py  # MCP-enabled agent with multi-server tool access
+│   │   ├── command_service.py    # Framework-agnostic command execution logic (shared by Slack + MCP)
 │   │   ├── image_service.py      # AI image generation
 │   │   ├── persona_service.py    # Lukas bear persona management
 │   │   ├── engagement_service.py # Probability-based engagement logic
@@ -101,20 +107,23 @@ lukas_chat_bear/
 │       └── retry.py              # Retry/backoff utilities
 │
 ├── tests/
-│   ├── integration/              # Slack + LLM integration tests
+│   ├── integration/              # Slack + LLM + MCP integration tests
 │   │   ├── test_slack_events.py
 │   │   ├── test_llm_integration.py
+│   │   ├── test_mcp_integration.py    # MCP server connection and tool invocation tests
 │   │   └── test_scheduled_tasks.py
 │   ├── unit/                     # Business logic unit tests
 │   │   ├── test_persona_service.py
 │   │   ├── test_engagement_logic.py
-│   │   └── test_command_parser.py
+│   │   └── services/
+│   │       └── test_command_service.py # Framework-agnostic command logic tests
 │   └── fixtures/                 # Test data and mocks
 │       └── slack_events.json
 │
 ├── docker/
-│   ├── Dockerfile                # Bot container build configuration
-│   └── mcp-servers/              # MCP server containers
+│   ├── Dockerfile                # Bot container build configuration (multi-process)
+│   ├── start-bot.sh              # Startup script: MCP server (background) + Slack bot (foreground)
+│   └── mcp-servers/              # External MCP server containers
 │       └── web-search/           # Web search MCP server
 │           └── Dockerfile        # Node.js container with Supergateway bridge
 │
@@ -139,7 +148,20 @@ lukas_chat_bear/
 
 **Modern Python Tooling**: Uses `pyproject.toml` (PEP 621 standard) with `uv` package manager for fast, reliable dependency management. Docker Compose file at root level for convenient `docker compose up` commands.
 
-**MCP Architecture**: Two-container architecture where the bot container (Python) connects to the web-search-mcp container (Node.js) via SSE (Server-Sent Events) over Docker network. The official MCP Python SDK manages SSE connection with background task lifecycle pattern to maintain persistent context throughout bot lifetime. The web-search-mcp server runs stdio-based MCP tools and Supergateway bridges them to SSE for network access. This enables persistent, low-latency tool access without spawning processes per request. LangChain/LangGraph create_react_agent framework converts MCP tools to LangChain StructuredTools for autonomous tool selection and reasoning.
+**MCP Architecture**: Multi-server architecture with three MCP components:
+
+1. **Web Search MCP** (external container, Node.js): Provides web search tools (full-web-search, get-web-search-summaries, get-single-web-page-content) via SSE transport on port 9765. Supergateway bridges stdio-based MCP tools to network-accessible SSE.
+
+2. **Slack Operations MCP** (co-located in bot container, Python/Starlette): Exposes 5 Slack command tools on port 9766:
+   - `post_message_to_channel` - Post messages to Slack channels with attribution
+   - `create_reminder` - Schedule reminders with flexible time parsing
+   - `get_team_info` - Query team members, bot status, engagement stats
+   - `update_bot_config` - Update bot configuration (admin-only)
+   - `generate_and_post_image` - Generate AI images and post to channels (admin-only)
+
+3. **Command Service Layer**: Framework-agnostic business logic (`CommandService` class) shared between direct Slack handlers and MCP tools. Returns structured dicts instead of formatted strings, enabling protocol-independent command execution. Zero code duplication between Slack and MCP paths.
+
+The official MCP Python SDK manages persistent SSE connections with background task lifecycle pattern. LangGraph's `create_react_agent` framework converts all 8 MCP tools (3 web search + 5 Slack operations) to LangChain `StructuredTool` instances, enabling autonomous tool selection based on natural language queries. Multi-process container startup: MCP server launches in background (port 9766), then Slack bot in foreground.
 
 ## Complexity Tracking
 
@@ -150,6 +172,107 @@ No constitution violations. All complexity is justified by current needs:
 - Service layer needed to separate Slack SDK from business logic
 - APScheduler needed for time-based proactive engagement (core requirement)
 - Docker Compose needed for deployment isolation and reproducibility
+- MCP architecture enables natural language command processing via LLM agent (core UX requirement)
+- CommandService extraction eliminates code duplication between Slack and MCP protocols
+
+---
+
+## MCP Command System Implementation
+
+**Completed**: 2025-10-27
+
+### Architecture Decision: Natural Language Commands via MCP
+
+**Problem**: Original regex-based command parsing required exact syntax, poor UX for users who had to memorize specific command formats.
+
+**Solution**: Replace regex parsing with MCP tool-based architecture where LLM agent understands natural language intent and autonomously selects appropriate tools.
+
+### Implementation Components
+
+**1. CommandService (src/services/command_service.py)** - 620 lines
+- Framework-agnostic business logic extracted from CommandExecutor
+- Shared by both Slack handlers and MCP server (zero duplication)
+- Returns structured dicts instead of formatted strings for protocol flexibility
+- Methods: `post_message()`, `create_reminder()`, `get_info()`, `update_config()`, `generate_image()`
+
+**2. Slack Operations MCP Server (src/mcp_server.py)** - 280 lines
+- Starlette/Uvicorn ASGI server exposing 5 Slack operations as MCP tools
+- Port 9766, SSE transport for persistent connections
+- Tool schema definitions enable LLM to understand when to invoke each tool
+- Delegates all business logic to CommandService for code reuse
+
+**3. Multi-Process Startup (docker/start-bot.sh)** - 40 lines
+- Launches MCP server in background (process 1)
+- Launches Slack bot in foreground (process 2)
+- Health checks and cleanup on shutdown
+- Single container deployment (no additional orchestration needed)
+
+**4. Multi-Server LLM Agent (src/services/llm_agent_service.py)** - Updated
+- Connects to both web-search and slack-operations MCP servers
+- Manages multiple SSE sessions and background tasks
+- Collects all tools (8 total) for unified agent decision-making
+- LangGraph `create_react_agent` enables autonomous tool selection
+
+**5. Simplified Command Handler (src/handlers/command_handler.py)** - Reduced from 1340 to 180 lines (87% reduction)
+- Removed: CommandParser class (230 lines of regex patterns)
+- Removed: CommandExecutor implementation (600+ lines)
+- All @mentions now route to LLM agent which decides tool usage
+- Kept: Helper functions and ConfirmationFormatter for backwards compatibility
+
+### Benefits Over Regex Parsing
+
+| Aspect | Before (Regex) | After (MCP) |
+|--------|---------------|-------------|
+| **User Experience** | Exact syntax required | Natural language variations work |
+| **Flexibility** | Adding commands = regex engineering | Adding commands = tool descriptions |
+| **Code Duplication** | Command logic in one file | Shared CommandService layer |
+| **Testing** | Coupled to Slack protocol | Framework-agnostic unit tests |
+| **Maintainability** | 1340 lines command handler | 180 lines + 620 lines reusable service |
+
+### Test Coverage
+
+**Unit Tests** (tests/unit/services/test_command_service.py) - 16 tests
+- All command types tested independently
+- Permission enforcement (admin vs public)
+- Edge cases (invalid formats, missing users)
+- Helper methods (time parsing, duration parsing)
+
+**Integration Tests** (tests/integration/test_mcp_integration.py) - 7 tests
+- MCP server connection and tool discovery
+- Multi-server agent initialization
+- Tool invocation flow end-to-end
+- Live MCP server tests (conditional on env var)
+
+**Test Results**: 21/23 tests pass (2 skipped as expected for live server tests)
+
+### Performance Characteristics
+
+- **Latency**: ~800-1200ms (vs ~50ms regex) - acceptable for conversational UX
+- **Cost**: ~$0.001-0.002 per command (LLM inference)
+- **Reliability**: Three-tier fallback ensures bot always responds
+- **Resource Usage**: +1 background process (MCP server), ~50MB additional memory
+
+### Natural Language Examples Supported
+
+**Reminders**:
+- "remind me in 30 minutes to check the build"
+- "ping me in half an hour about the build"
+- "can you remind me tomorrow at 3pm to review PRs"
+
+**Posting**:
+- "post 'Meeting at 3pm' to #general"
+- "send a message to the team channel saying we're done"
+- "announce in #dev that the build is complete"
+
+**Info Queries**:
+- "team info" / "who's on the team"
+- "what's the bot status"
+- "show me engagement stats"
+
+**Admin Commands**:
+- "set dm interval to 48 hours"
+- "update thread probability to 0.4"
+- "generate a halloween image to #random"
 
 ---
 

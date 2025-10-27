@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.models.team_member import TeamMember
 from src.utils.logger import logger
+from src.utils.config_loader import config
 
 
 class TeamMemberRepository:
@@ -46,6 +47,8 @@ class TeamMemberRepository:
         """
         Get existing team member or create new one.
 
+        Automatically sets admin status based on bot.admin_users config.
+
         Args:
             slack_user_id: Slack user ID
             display_name: User's display name
@@ -55,6 +58,10 @@ class TeamMemberRepository:
         Returns:
             TeamMember (existing or new)
         """
+        # Load admin user IDs from config
+        admin_user_ids = config.get("bot.admin_users", [])
+        is_admin = slack_user_id in admin_user_ids
+
         member = self.get_by_slack_id(slack_user_id)
         if member:
             # Update profile information if changed
@@ -65,23 +72,34 @@ class TeamMemberRepository:
             if real_name and member.real_name != real_name:
                 member.real_name = real_name
                 updated = True
+
+            # Update admin status if it changed (respects config changes)
+            if member.is_admin != is_admin:
+                member.is_admin = is_admin
+                updated = True
+                logger.info(f"Updated admin status for {slack_user_id} to {is_admin}")
+
             if updated:
                 member.updated_at = datetime.utcnow()
                 self.db.commit()
                 self.db.refresh(member)
             return member
 
-        # Create new team member
+        # Create new team member with correct admin status
         member = TeamMember(
             slack_user_id=slack_user_id,
             display_name=display_name,
             real_name=real_name,
             is_bot=is_bot,
+            is_admin=is_admin,  # Set from config
         )
         self.db.add(member)
         self.db.commit()
         self.db.refresh(member)
-        logger.info(f"Created team member {member.id} for Slack user {slack_user_id}")
+        logger.info(
+            f"Created team member {member.id} for Slack user {slack_user_id} "
+            f"(admin={is_admin})"
+        )
         return member
 
     def update_last_proactive_dm(self, member_id: str) -> None:

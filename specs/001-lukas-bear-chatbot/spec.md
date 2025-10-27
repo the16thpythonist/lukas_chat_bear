@@ -62,22 +62,22 @@ Lukas periodically generates and posts whimsical, bear-themed images to the rand
 
 ---
 
-### User Story 4 - Command Execution (Priority: P4)
+### User Story 4 - Natural Language Command Execution (Priority: P4)
 
-Team members can issue specific commands to Lukas for administrative and utility functions. Commands include: posting announcements to channels, creating reminders, retrieving team information, and administrative configuration of Lukas's behavior (intervals, probabilities, persona adjustments).
+Team members can issue commands to Lukas using natural language for administrative and utility functions. Lukas uses AI to understand intent and execute commands including: posting announcements to channels, creating reminders, retrieving team information, and administrative configuration of behavior (intervals, probabilities, persona adjustments). Commands are processed through MCP (Model Context Protocol) tools, allowing flexible natural language rather than rigid syntax.
 
-**Why this priority**: Extends Lukas beyond conversation to become a useful team utility. Enables team members to leverage Lukas for practical tasks while maintaining the friendly mascot personality.
+**Why this priority**: Extends Lukas beyond conversation to become a useful team utility. Natural language command processing eliminates the need to learn specific command syntax, making Lukas more accessible and user-friendly while maintaining the bear mascot personality.
 
-**Independent Test**: Team member sends command "Lukas, post 'Team meeting at 3pm today' to general channel". Lukas confirms understanding, posts the message to general channel, and reports completion to the requesting team member.
+**Independent Test**: Team member sends "Hey Lukas, can you post 'Team meeting at 3pm today' to the general channel?". Lukas understands the intent, posts the message to general channel, and confirms completion. Alternative phrasings like "send a message to #general saying..." or "announce to the team that..." also work.
 
 **Acceptance Scenarios**:
 
-1. **Given** team member sends "Lukas, post [message] to #general", **When** command is processed, **Then** Lukas posts message to general channel and confirms action
-2. **Given** team member asks "Lukas, remind the team about standup in 1 hour", **When** command is received, **Then** Lukas schedules reminder and sends notification at specified time
-3. **Given** admin sends "Lukas, set random DM interval to 4 hours", **When** command is processed, **Then** Lukas updates configuration and confirms change
-4. **Given** team member asks "Lukas, who is available today?", **When** command is processed, **Then** Lukas retrieves and shares team availability information
-5. **Given** unauthorized user tries admin command, **When** permission check occurs, **Then** Lukas politely declines and explains admin-only restriction
-6. **Given** ambiguous command is received, **When** Lukas cannot parse intent, **Then** Lukas asks for clarification or suggests correct command format
+1. **Given** team member says "Lukas, post [message] to #general" OR "send a message to the team saying..." OR "announce in #general that...", **When** LLM processes request, **Then** Lukas uses post_message_to_channel tool, posts message, and confirms action
+2. **Given** team member asks "remind me in 30 minutes to check the build" OR "ping me in half an hour about the build" OR "can you remind me tomorrow at 3pm", **When** request is processed, **Then** Lukas uses create_reminder tool and confirms scheduled reminder
+3. **Given** admin says "set random DM interval to 4 hours" OR "change the DM frequency to every 4 hours" OR "update dm interval to 4h", **When** command is processed, **Then** Lukas uses update_bot_config tool and confirms configuration change
+4. **Given** team member asks "who's on the team?" OR "team info" OR "show me the team member list", **When** request is processed, **Then** Lukas uses get_team_info tool and shares team information
+5. **Given** unauthorized user tries admin command, **When** MCP tool enforces permission check, **Then** Lukas politely declines and explains admin-only restriction
+6. **Given** ambiguous request is received, **When** LLM cannot determine clear intent, **Then** Lukas asks for clarification in a friendly, helpful way
 
 ---
 
@@ -123,14 +123,14 @@ Team members can issue specific commands to Lukas for administrative and utility
 - **FR-015**: System MUST incorporate contextual themes (seasons, holidays, milestones) into image generation prompts
 - **FR-016**: System MUST validate generated images before posting to prevent inappropriate content
 
-**Command Processing**
+**Natural Language Command Processing (MCP-Based)**
 
-- **FR-017**: System MUST parse and execute channel posting commands (e.g., "post [message] to #channel-name")
-- **FR-018**: System MUST support scheduled reminders and notifications to individuals or channels
-- **FR-019**: System MUST provide team information retrieval (e.g., who's working on projects, availability, schedules)
-- **FR-020**: System MUST allow authorized administrators to configure bot behavior (intervals, probabilities, persona parameters)
-- **FR-021**: System MUST enforce permission checks for administrative commands
-- **FR-022**: System MUST provide command help and usage examples when requested
+- **FR-017**: System MUST understand natural language command requests using LLM agent with MCP tools (e.g., "post this to #channel", "send a message to the team", "announce in #general")
+- **FR-018**: System MUST support scheduled reminders via create_reminder tool accepting flexible time formats ("30 minutes", "2 hours", "3pm", "tomorrow at 9am")
+- **FR-019**: System MUST provide team information retrieval via get_team_info tool (team members, bot status, engagement statistics)
+- **FR-020**: System MUST allow authorized administrators to configure bot behavior via update_bot_config tool (intervals, probabilities, settings)
+- **FR-021**: System MUST enforce permission checks for administrative commands within MCP tool execution (admin-only tools return permission denied for non-admins)
+- **FR-022**: System MUST understand command intent across multiple natural language phrasings without requiring exact syntax
 
 **Slack Integration**
 
@@ -142,14 +142,20 @@ Team members can issue specific commands to Lukas for administrative and utility
 
 **Enhanced Capabilities (MCP Integration)**
 
-- **FR-034**: System SHOULD integrate web search capabilities via Model Context Protocol (MCP) using official MCP Python SDK with SSE transport
-- **FR-035**: System SHOULD provide three web search tools: full-web-search (complete content), get-web-search-summaries (snippets only), get-single-web-page-content (specific URL extraction)
-- **FR-036**: System SHOULD use LangChain/LangGraph agent framework with create_react_agent to autonomously decide when web search is needed
-- **FR-037**: System SHOULD maintain personality and conversation context when using enhanced tool capabilities
+- **FR-034**: System MUST integrate web search capabilities via Model Context Protocol (MCP) using official MCP Python SDK with SSE transport
+- **FR-035**: System MUST provide three web search tools via web-search-mcp server: full-web-search (complete content), get-web-search-summaries (snippets only), get-single-web-page-content (specific URL extraction)
+- **FR-036**: System MUST use LangChain/LangGraph agent framework with create_react_agent to autonomously decide when tools are needed (both web search and command execution)
+- **FR-037**: System MUST maintain personality and conversation context when using tool capabilities
 - **FR-038**: System MUST gracefully degrade to standard conversation mode if MCP servers are unavailable (three-tier fallback: agent with tools → direct LLM → emergency persona response)
-- **FR-039**: System SHOULD support background task lifecycle for MCP connections to maintain persistent SSE context throughout bot lifetime
+- **FR-039**: System MUST support background task lifecycle for MCP connections to maintain persistent SSE context throughout bot lifetime
 - **FR-040**: System MUST support configuration toggle (USE_MCP_AGENT env var) to enable/disable MCP agent service
-- **FR-041**: System SHOULD connect to web-search-mcp server via Docker network using SSE endpoint at startup
+- **FR-041**: System MUST connect to multiple MCP servers (web-search-mcp, slack-operations-mcp) via Docker network or localhost using SSE endpoints at startup
+- **FR-042**: System MUST run slack-operations MCP server as co-located process within same container (multi-process architecture)
+- **FR-043**: System MUST expose five Slack operation tools via slack-operations-mcp: post_message_to_channel, create_reminder, get_team_info, update_bot_config (admin-only), generate_and_post_image (admin-only)
+- **FR-044**: System MUST share CommandService business logic layer between Slack handlers and MCP server for code reuse
+- **FR-045**: System MUST enforce permission checks within MCP tools (admin-only tools verify user.is_admin before execution)
+- **FR-046**: System MUST run MCP server on configurable port (default: 9766) with SSE endpoint at /sse
+- **FR-047**: System MUST handle MCP server startup/shutdown gracefully with main bot process (startup script manages both processes)
 
 **Reliability & Error Handling**
 
@@ -238,25 +244,58 @@ Team members can issue specific commands to Lukas for administrative and utility
 
 ## Technical Enhancements
 
-**Model Context Protocol (MCP) Integration**: The system integrates the official MCP Python SDK (mcp>=1.0.0) with LangChain/LangGraph to enable tool-augmented conversations. This allows Lukas to autonomously access web search capabilities when helpful to answer questions with current information.
+**Model Context Protocol (MCP) Integration**: The system integrates the official MCP Python SDK (mcp>=1.0.0) with LangChain/LangGraph to enable tool-augmented conversations. This allows Lukas to autonomously access both web search capabilities and Slack command execution when helpful, using natural language instead of rigid command syntax.
+
+**Multi-Server MCP Architecture**:
+- **web-search-mcp**: External container providing web search capabilities (Node.js + Playwright browsers)
+- **slack-operations-mcp**: Co-located MCP server running in same container as bot (Python + Starlette + Uvicorn)
+- **Agent Framework**: LangChain's create_react_agent autonomously selects appropriate tools based on user intent
+- **Connection Management**: Multiple persistent SSE connections maintained via background tasks throughout bot lifetime
+
+**Web Search Tools** (via web-search-mcp server):
+- `full-web-search`: Complete web search with full page content extraction
+- `get-web-search-summaries`: Lightweight search returning snippets only
+- `get-single-web-page-content`: Extract content from specific URLs
+
+**Slack Operation Tools** (via slack-operations-mcp server):
+- `post_message_to_channel`: Post messages to Slack channels (public)
+- `create_reminder`: Schedule reminders for users (public)
+- `get_team_info`: Retrieve team information, bot status, or engagement statistics (public)
+- `update_bot_config`: Update bot configuration settings (admin-only)
+- `generate_and_post_image`: Generate and post AI images (admin-only)
+
+**Command System Architecture**:
+- **CommandService Layer**: Pure business logic shared between Slack handlers and MCP server (src/services/command_service.py)
+- **MCP Server**: Exposes CommandService methods as MCP tools (src/mcp_server.py, runs on port 9766)
+- **Multi-Process Container**: Startup script (docker/start-bot.sh) launches both MCP server (background) and Slack bot (foreground)
+- **Code Reuse**: Zero duplication - CommandService handles all business logic, MCP server provides protocol translation
+- **Natural Language**: Replaces 1,100+ lines of regex command parsing with LLM intent understanding
 
 **Implementation Details**:
-- **MCP SDK**: Official Python MCP client with SSE (Server-Sent Events) transport for persistent, low-latency connections
-- **Agent Framework**: LangChain's create_react_agent for autonomous tool selection and reasoning
-- **Web Search Tools**: Three tools provided by web-search-mcp server:
-  - `full-web-search`: Complete web search with full page content extraction
-  - `get-web-search-summaries`: Lightweight search returning snippets only
-  - `get-single-web-page-content`: Extract content from specific URLs
-- **Architecture**: Two-container setup where bot (Python) connects to web-search-mcp (Node.js) via SSE over Docker network
-- **Connection Lifecycle**: Background task maintains persistent SSE connection throughout bot lifetime, solving async context cleanup challenges
-- **Service Selection**: `get_llm_service()` function selects between MCP-enabled agent (if available) or standard LLM service based on USE_MCP_AGENT env var
+- **MCP SDK**: Official Python MCP client and server with SSE transport
+- **Web Framework**: Starlette + Uvicorn for MCP server HTTP/SSE endpoints
+- **Multi-Server Support**: LLM agent connects to multiple MCP servers, combines all tools
+- **Service Selection**: `get_llm_service()` selects MCP-enabled agent (if available) or standard LLM based on USE_MCP_AGENT env var
 - **Graceful Degradation**: Three-tier fallback ensures responses always generated:
-  1. Try agent with MCP tools
+  1. Try agent with MCP tools (web search + Slack operations)
   2. If agent fails → Try direct LLM without tools
   3. If LLM fails → Use emergency persona fallback response
-- **No API Keys Required**: web-search-mcp uses browser automation (Playwright) against Bing/Brave/DuckDuckGo
-- **Testing**: 12 tests (8 unit, 4 integration) covering initialization, tool invocation, fallback behavior, and service selection
-- **Performance**: Initial connection ~2-5s at startup, tool calls ~3-10s, overall response <15s
-- **Resource Usage**: +500MB-2GB memory footprint for MCP container (browsers + Node.js)
+- **Permission Enforcement**: MCP tools enforce permission checks (admin-only tools verify user.is_admin)
+- **Testing**: 23 tests (16 CommandService unit, 5 MCP integration, 2 live/skipped) with 100% pass rate
+- **Performance**:
+  - MCP server startup: ~3s
+  - Command execution via MCP: ~800-1200ms (includes LLM inference)
+  - Web search via MCP: ~3-10s
+  - Overall response: <15s
+- **Resource Usage**:
+  - web-search-mcp container: +500MB-2GB (browsers + Node.js)
+  - slack-operations-mcp: +50MB (Python + Starlette, same container)
 
-The integration is production-ready (98% complete) with comprehensive error handling, monitoring, and documentation. If MCP servers are unavailable, Lukas continues operating with standard LLM capabilities, ensuring uninterrupted service.
+**Benefits Over Regex Parsing**:
+- **User Experience**: Natural language ("remind me in 30 mins") vs exact syntax ("remind me in 30 minutes to")
+- **Flexibility**: Multiple phrasings work ("post this to #channel", "send message to channel", "announce in channel")
+- **Maintainability**: Add new commands by updating tool descriptions, not regex patterns
+- **Code Quality**: 74% test coverage, ~1,100 fewer lines of regex parsing code
+- **Architecture**: Clean separation (business logic, MCP protocol, Slack protocol)
+
+The integration is production-ready with comprehensive error handling, monitoring, and documentation. If MCP servers are unavailable, Lukas continues operating with standard LLM capabilities, ensuring uninterrupted service.

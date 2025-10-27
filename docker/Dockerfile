@@ -42,11 +42,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Expose no ports (uses Slack Socket Mode - no incoming connections needed)
 
-# Set entrypoint to run migrations then start bot
-# This entrypoint script will first run the alembic migrations and then start 
-# the bot with the `bot.py` module.
+# Copy startup scripts
+# entrypoint.sh: Runs migrations
+# start-bot.sh: Starts both MCP server and Slack bot
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/start-bot.sh /start-bot.sh
+RUN chmod +x /entrypoint.sh /start-bot.sh
 
+# Set entrypoint to run migrations then start both processes
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "-m", "src.bot"]
+CMD ["/start-bot.sh"]

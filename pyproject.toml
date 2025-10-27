@@ -31,6 +31,9 @@ dependencies = [
     "langchain-core>=0.3.0",
     "langchain-openai>=0.2.0",
     "langgraph>=0.2.0",
+    # MCP Server dependencies (for slack-operations MCP server)
+    "starlette>=0.27.0",
+    "uvicorn>=0.24.0",
 ]
 
 [project.optional-dependencies]

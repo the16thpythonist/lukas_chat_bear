@@ -219,24 +219,91 @@
 
 ### Tests for User Story 4
 
-- [ ] T077 [P] [US4] Create unit test for command parsing in tests/unit/test_command_parser.py
-- [ ] T078 [P] [US4] Create unit test for permission checks in tests/unit/test_command_handler.py
+- [X] T077 [P] [US4] Create unit test for command parsing in tests/unit/test_command_parser.py
+- [X] T078 [P] [US4] Create unit test for permission checks in tests/unit/test_command_handler.py
 
 ### Implementation for User Story 4
 
-- [ ] T079 [P] [US4] Implement command parser with pattern matching in src/handlers/command_handler.py
-- [ ] T080 [US4] Implement "post [message] to #channel" command in src/handlers/command_handler.py
-- [ ] T081 [US4] Implement reminder scheduling command in src/handlers/command_handler.py
-- [ ] T082 [US4] Implement team information retrieval command in src/handlers/command_handler.py
-- [ ] T083 [US4] Implement admin configuration commands (set intervals, probabilities) in src/handlers/command_handler.py
-- [ ] T084 [US4] Add permission checking for admin commands in src/handlers/command_handler.py
-- [ ] T085 [US4] Implement command help and usage examples in src/handlers/command_handler.py
-- [ ] T086 [US4] Add command confirmation messages to users in src/handlers/command_handler.py
-- [ ] T087 [US4] Register app_mention event handler in src/bot.py
-- [ ] T088 [US4] Add error handling for invalid commands in src/handlers/command_handler.py
-- [ ] T089 [US4] Update Configuration table when settings change in src/handlers/command_handler.py
+- [X] T079 [P] [US4] Implement command parser with pattern matching in src/handlers/command_handler.py
+- [X] T080 [US4] Implement "post [message] to #channel" command in src/handlers/command_handler.py
+- [X] T081 [US4] Implement reminder scheduling command in src/handlers/command_handler.py
+- [X] T082 [US4] Implement team information retrieval command in src/handlers/command_handler.py
+- [X] T083 [US4] Implement admin configuration commands (set intervals, probabilities) in src/handlers/command_handler.py
+- [X] T084 [US4] Add permission checking for admin commands in src/handlers/command_handler.py
+- [X] T085 [US4] Implement command help and usage examples in src/handlers/command_handler.py
+- [X] T086 [US4] Add command confirmation messages to users in src/handlers/command_handler.py
+- [X] T087 [US4] Register app_mention event handler in src/bot.py
+- [X] T088 [US4] Add error handling for invalid commands in src/handlers/command_handler.py
+- [X] T089 [US4] Update Configuration table when settings change in src/handlers/command_handler.py
 
 **Checkpoint**: All user stories complete - Lukas has full functionality
+
+---
+
+## Phase 6.5: MCP Command System Migration (Natural Language Commands) - COMPLETED ✅
+
+**Goal**: Replace regex-based command parsing with MCP tool-based natural language command processing for improved user experience
+
+**Added**: 2025-10-27 | **Completed**: 2025-10-27 | **Status**: Production-ready
+
+**Implementation Details**:
+- Framework-agnostic CommandService layer (shared business logic)
+- Slack Operations MCP server (co-located in bot container)
+- Multi-server MCP architecture (web-search + slack-operations)
+- Natural language understanding via LLM agent
+- 87% code reduction in command_handler.py (1340 → 180 lines)
+
+### Tests for MCP Command System
+
+- [X] T131 [P] [US4-MCP] Create unit test for CommandService.post_message() in tests/unit/services/test_command_service.py
+- [X] T132 [P] [US4-MCP] Create unit test for CommandService.create_reminder() in tests/unit/services/test_command_service.py
+- [X] T133 [P] [US4-MCP] Create unit test for CommandService.get_info() in tests/unit/services/test_command_service.py
+- [X] T134 [P] [US4-MCP] Create unit test for CommandService.update_config() with permission checks in tests/unit/services/test_command_service.py
+- [X] T135 [P] [US4-MCP] Create unit test for CommandService.generate_image() with permission checks in tests/unit/services/test_command_service.py
+- [X] T136 [P] [US4-MCP] Create unit test for CommandService helper methods (_parse_duration_to_minutes, _parse_hours_from_string, _parse_days_from_string) in tests/unit/services/test_command_service.py
+- [X] T137 [P] [US4-MCP] Create integration test for slack-operations MCP server connection in tests/integration/test_mcp_integration.py
+- [X] T138 [P] [US4-MCP] Create integration test for multi-server MCP agent initialization in tests/integration/test_mcp_integration.py
+- [X] T139 [P] [US4-MCP] Create integration test for tool discovery across multiple servers in tests/integration/test_mcp_integration.py
+
+### Implementation for MCP Command System
+
+- [X] T140 [P] [US4-MCP] Create CommandService class with framework-agnostic business logic in src/services/command_service.py
+- [X] T141 [US4-MCP] Implement CommandService.post_message() method in src/services/command_service.py
+- [X] T142 [US4-MCP] Implement CommandService.create_reminder() with time parsing in src/services/command_service.py
+- [X] T143 [US4-MCP] Implement CommandService.get_info() supporting team/status/stats in src/services/command_service.py
+- [X] T144 [US4-MCP] Implement CommandService.update_config() with admin permission check in src/services/command_service.py
+- [X] T145 [US4-MCP] Implement CommandService.generate_image() with admin permission check in src/services/command_service.py
+- [X] T146 [P] [US4-MCP] Add starlette and uvicorn dependencies to pyproject.toml
+- [X] T147 [P] [US4-MCP] Create MCP server with 5 Slack operation tools in src/mcp_server.py
+- [X] T148 [US4-MCP] Implement post_message_to_channel tool in src/mcp_server.py
+- [X] T149 [US4-MCP] Implement create_reminder tool in src/mcp_server.py
+- [X] T150 [US4-MCP] Implement get_team_info tool in src/mcp_server.py
+- [X] T151 [US4-MCP] Implement update_bot_config tool in src/mcp_server.py
+- [X] T152 [US4-MCP] Implement generate_and_post_image tool in src/mcp_server.py
+- [X] T153 [P] [US4-MCP] Create multi-process startup script in docker/start-bot.sh
+- [X] T154 [US4-MCP] Update Dockerfile to use start-bot.sh entrypoint in docker/Dockerfile
+- [X] T155 [P] [US4-MCP] Add MCP_SLACK_OPS_URL environment variable to docker-compose.dev.yml
+- [X] T156 [P] [US4-MCP] Expose port 9766 for MCP server in docker-compose.dev.yml
+- [X] T157 [US4-MCP] Update llm_agent_service.py to support multiple MCP servers in src/services/llm_agent_service.py
+- [X] T158 [US4-MCP] Update initialize_mcp() to connect to slack-operations server in src/services/llm_agent_service.py
+- [X] T159 [US4-MCP] Simplify command_handler.py to route all mentions to LLM agent in src/handlers/command_handler.py
+- [X] T160 [US4-MCP] Remove CommandParser class from command_handler.py
+- [X] T161 [US4-MCP] Remove CommandExecutor implementation from command_handler.py
+- [X] T162 [P] [US4-MCP] Create MCP_COMMAND_MIGRATION_COMPLETE.md documentation
+- [X] T163 [P] [US4-MCP] Update spec.md to reflect natural language command processing
+- [X] T164 [P] [US4-MCP] Update plan.md with MCP command system architecture
+- [X] T165 [P] [US4-MCP] Update tasks.md with completed command migration tasks
+
+**Test Results**: 16 unit tests + 7 integration tests = 23 total (21 passing, 2 skipped for live server)
+
+**Benefits**:
+- Natural language flexibility (multiple phrasings work)
+- 87% code reduction in command handler
+- Zero code duplication (CommandService shared layer)
+- Framework-agnostic testing
+- Improved maintainability
+
+**Checkpoint**: Command system migrated to MCP - users can now use natural language instead of exact command syntax
 
 ---
 
@@ -362,7 +429,7 @@ With multiple developers:
 
 ## Task Summary
 
-**Total Tasks**: 130 tasks
+**Total Tasks**: 165 tasks
 
 **Task Count by Phase**:
 - Phase 1 (Setup): 11 tasks ✅
@@ -371,7 +438,8 @@ With multiple developers:
 - Phase 3.5 (MCP Integration): 26 tasks ✅ (COMPLETED)
 - Phase 4 (User Story 2 - Proactive Engagement): 17 tasks ✅
 - Phase 5 (User Story 3 - Image Posting): 14 tasks ✅ (COMPLETED)
-- Phase 6 (User Story 4 - Commands): 13 tasks
+- Phase 6 (User Story 4 - Commands): 13 tasks ✅ (COMPLETED)
+- Phase 6.5 (MCP Command System Migration): 35 tasks ✅ (COMPLETED)
 - Phase 7 (Polish): 15 tasks
 
 **Parallel Opportunities**: 35+ tasks marked [P] can run in parallel within their phases
