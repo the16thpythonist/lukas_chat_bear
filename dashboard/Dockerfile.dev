@@ -1,0 +1,39 @@
+# Development Dockerfile for dashboard
+# Includes both Python and Node.js for running dev servers
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Node.js (for Vite dev server)
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY dashboard/backend/requirements.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Install frontend dependencies (will be mounted in dev, but install here for consistency)
+COPY dashboard/frontend/package*.json ./frontend/
+RUN cd frontend && npm ci
+
+# Copy shared code (will also be mounted in dev)
+COPY src/ ./src/
+
+# Create directories
+RUN mkdir -p /app/data /app/sessions /app/thumbnails && \
+    chmod 755 /app/sessions /app/thumbnails
+
+# Set environment
+ENV PYTHONPATH=/app
+ENV FLASK_APP=backend.app
+ENV FLASK_ENV=development
+
+# Expose ports
+EXPOSE 8080 5173
+
+# Development will override this with the dev startup script
+CMD ["/bin/sh", "/app/start-dev.sh"]

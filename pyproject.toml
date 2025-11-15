@@ -15,6 +15,8 @@ dependencies = [
     "aiohttp>=3.9.0",  # Required for AsyncApp
     "openai>=1.3.0",
     "apscheduler>=3.10.4",
+    "dateparser>=1.2.0",  # Natural language date/time parsing
+    "pytz>=2023.3",  # Timezone support for dateparser
     "sqlalchemy>=2.0.23",
     "alembic>=1.12.1",
     "tenacity>=8.2.3",
@@ -34,6 +36,8 @@ dependencies = [
     # MCP Server dependencies (for slack-operations MCP server)
     "starlette>=0.27.0",
     "uvicorn>=0.24.0",
+    # Internal API dependencies (for dashboard integration)
+    "flask[async]>=3.0.0",
 ]
 
 [project.optional-dependencies]

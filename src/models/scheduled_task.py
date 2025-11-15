@@ -54,8 +54,11 @@ class ScheduledTask(Base):
     # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
 
-    # APScheduler job ID
-    job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    # APScheduler job ID (unique per execution, not globally unique)
+    job_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+
+    # Job name for grouping recurring tasks (e.g., "random_dm_task")
+    job_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
 
     # Task configuration
     task_type: Mapped[str] = mapped_column(

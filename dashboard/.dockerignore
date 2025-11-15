@@ -1,0 +1,28 @@
+# Flask session files
+backend/flask_session/
+
+# Node modules (will be installed in image)
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+
+# Python cache
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+backend/tests/__pycache__/
+frontend/tests/
+
+# OS
+.DS_Store
+Thumbs.db

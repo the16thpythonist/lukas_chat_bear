@@ -37,6 +37,45 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Dashboard: Admin Web Interface (Production)
+  # Provides monitoring and control capabilities for the bot
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.dashboard
+    container_name: lukas-dashboard
+    env_file:
+      - .env
+    volumes:
+      # Read-only access to bot database
+      - ./data:/app/data:ro
+      # Session storage persistence
+      - dashboard-sessions:/app/sessions
+      # Thumbnail cache persistence
+      - dashboard-thumbnails:/app/thumbnails
+    environment:
+      - DATABASE_PATH=/app/data/bot.db
+      - SESSION_DIR=/app/sessions
+      - FLASK_ENV=production
+    ports:
+      - "8080:8080"
+    depends_on:
+      - lukas-bot
+    networks:
+      - lukas-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # MCP Server: Web Search
   # Provides web search capabilities via Brave/Bing/DuckDuckGo
   # No API keys required - uses browser automation
@@ -70,3 +109,7 @@ services:
 networks:
   lukas-network:
     driver: bridge
+
+volumes:
+  dashboard-sessions:
+  dashboard-thumbnails:

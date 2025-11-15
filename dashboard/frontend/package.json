@@ -1,0 +1,25 @@
+{
+  "name": "lukas-dashboard-frontend",
+  "version": "1.0.0",
+  "description": "Admin web dashboard for Lukas the Bear Slack bot",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:unit": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "vue": "^3.3.0",
+    "vue-router": "^4.2.0",
+    "axios": "^1.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.4.0",
+    "vite": "^4.5.0",
+    "vitest": "^0.34.0",
+    "@vue/test-utils": "^2.4.0",
+    "@playwright/test": "^1.40.0"
+  }
+}

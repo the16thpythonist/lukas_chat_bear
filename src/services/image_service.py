@@ -8,16 +8,24 @@ Includes contextual prompt generation, retry logic, and Slack posting.
 import os
 import random
 import time
+import requests
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+from pathlib import Path
 
 from openai import OpenAI, OpenAIError, APIConnectionError, BadRequestError
 from pybreaker import CircuitBreaker
 
 from src.models.generated_image import GeneratedImage
+from src.models.scheduled_task import TaskStatus
+from src.repositories.team_member_repo import TeamMemberRepository
+from src.repositories.conversation_repo import ConversationRepository
 from src.utils.logger import logger
 from src.utils.retry import retry_on_api_error
+from src.services.scheduler_service import update_task_after_execution
+from src.utils.config_loader import config
 
 
 class ImageService:
@@ -36,6 +44,9 @@ class ImageService:
     # DALL-E 3 pricing (as of 2025)
     DALLE3_COST_1024 = 0.040  # $0.040 per image at 1024x1024
     DALLE3_COST_HD = 0.080  # $0.080 per HD image
+
+    # Local image storage directory
+    IMAGES_DIR = Path(os.getenv('IMAGES_DIR', '/app/data/images'))
 
     # Seasonal themes by month
     SEASONAL_THEMES = {
@@ -132,6 +143,8 @@ class ImageService:
         """
         self.db_session = db_session
         self.slack_client = slack_client
+        self.team_member_repo = TeamMemberRepository(db_session)
+        self.conversation_repo = ConversationRepository(db_session)
 
         # Initialize OpenAI client
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -146,6 +159,27 @@ class ImageService:
             fail_max=5,
             reset_timeout=60,
             name="dalle_circuit_breaker"
+        )
+
+    def _get_or_create_bot_team_member(self):
+        """
+        Get or create a synthetic team member for the bot itself.
+
+        This allows channel posts to be associated with a team member
+        so they appear in the Activity Log.
+
+        Returns:
+            TeamMember representing Lukas the Bear bot
+        """
+        # Use a special Slack user ID for the bot itself
+        # Get bot user ID from environment if available
+        bot_user_id = os.getenv("SLACK_BOT_USER_ID", "LUKAS_BOT")
+
+        return self.team_member_repo.get_or_create(
+            slack_user_id=bot_user_id,
+            display_name="Lukas the Bear (Bot)",
+            real_name="Lukas",
+            is_bot=True
         )
 
     def generate_contextual_prompt(
@@ -296,6 +330,41 @@ class ImageService:
             logger.error(f"DALL-E error: {e}")
             raise
 
+    def download_and_save_image(
+        self,
+        image_url: str,
+        image_id: str
+    ) -> Optional[str]:
+        """
+        Download image from URL and save to local filesystem.
+
+        Args:
+            image_url: URL of the image to download (from DALL-E)
+            image_id: Unique identifier for the image
+
+        Returns:
+            Local file path if successful, None otherwise
+        """
+        try:
+            # Ensure images directory exists
+            self.IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+            # Download image
+            logger.info(f"Downloading image from {image_url}")
+            response = requests.get(image_url, timeout=30)
+            response.raise_for_status()
+
+            # Save to local file
+            local_path = self.IMAGES_DIR / f"{image_id}.png"
+            local_path.write_bytes(response.content)
+
+            logger.info(f"Image saved locally to {local_path}")
+            return str(local_path)
+
+        except Exception as e:
+            logger.error(f"Failed to download and save image {image_id}: {e}")
+            return None
+
     async def generate_and_store_image(
         self,
         theme: Optional[str] = None,
@@ -337,10 +406,10 @@ class ImageService:
                 prompt
             )
 
-            # Create successful record
+            # Create initial record (need ID for file path)
             image_record = GeneratedImage(
                 prompt=prompt,
-                image_url=result["url"],
+                image_url=result["url"],  # Store original Azure URL temporarily
                 status="generated",
                 generation_duration_seconds=result["duration"],
                 cost_usd=self.DALLE3_COST_1024,  # Standard quality
@@ -348,6 +417,25 @@ class ImageService:
             )
 
             self.db_session.add(image_record)
+            self.db_session.flush()  # Get the ID without committing
+
+            # Download and save image locally
+            local_path = self.download_and_save_image(
+                image_url=result["url"],
+                image_id=image_record.id
+            )
+
+            # Update record with local path (keep Azure URL in metadata for reference)
+            if local_path:
+                if image_record.meta is None:
+                    image_record.meta = {}
+                image_record.meta['original_url'] = result["url"]
+                flag_modified(image_record, 'meta')  # Tell SQLAlchemy the JSON field changed
+                image_record.image_url = local_path
+                logger.info(f"Image saved locally: {local_path}")
+            else:
+                logger.warning(f"Failed to save locally, keeping Azure URL: {result['url']}")
+
             self.db_session.commit()
 
             logger.info(f"Image generated and stored: {image_record.id}")
@@ -447,16 +535,18 @@ class ImageService:
     def _post_to_slack(
         self,
         channel_id: str,
-        image_url: str,
-        caption: str
+        image_path: str,
+        caption: str,
+        original_url: Optional[str] = None
     ) -> Dict:
         """
         Post image to Slack channel.
 
         Args:
             channel_id: Slack channel ID
-            image_url: URL to image
+            image_path: Path to image file (local or URL)
             caption: Caption text
+            original_url: Optional original DALL-E URL (used if available)
 
         Returns:
             Slack API response dict
@@ -467,25 +557,41 @@ class ImageService:
         if not self.slack_client:
             raise Exception("Slack client not configured")
 
-        # Post image with caption
-        response = self.slack_client.chat_postMessage(
-            channel=channel_id,
-            text=caption,
-            blocks=[
-                {
-                    "type": "image",
-                    "image_url": image_url,
-                    "alt_text": "Bear image from Lukas"
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": caption
+        # Prefer original URL if available (works without files:write permission)
+        # Otherwise use the provided path
+        url_to_use = original_url if original_url else image_path
+
+        # Check if we have a URL (original or otherwise)
+        if url_to_use and url_to_use.startswith('http'):
+            # It's a URL - use it directly in image block (no files:write needed)
+            response = self.slack_client.chat_postMessage(
+                channel=channel_id,
+                text=caption,
+                blocks=[
+                    {
+                        "type": "image",
+                        "image_url": url_to_use,
+                        "alt_text": "Bear image from Lukas"
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": caption
+                        }
                     }
-                }
-            ]
-        )
+                ]
+            )
+        else:
+            # It's a local file - upload to Slack (requires files:write scope)
+            logger.warning("Attempting file upload - requires files:write scope")
+            with open(image_path, 'rb') as file:
+                response = self.slack_client.files_upload_v2(
+                    channel=channel_id,
+                    file=file,
+                    title="Bear image from Lukas",
+                    initial_comment=caption
+                )
 
         return response
 
@@ -515,11 +621,20 @@ class ImageService:
             caption = self.generate_caption(image_record)
 
         try:
+            # Get original URL from metadata (if available)
+            original_url = None
+            if image_record.meta and 'original_url' in image_record.meta:
+                original_url = image_record.meta['original_url']
+                logger.info(f"Found original URL in metadata: {original_url[:100]}...")
+            else:
+                logger.warning(f"No original URL found. Meta: {image_record.meta}, image_url: {image_record.image_url}")
+
             # Post to Slack
             response = self._post_to_slack(
                 channel_id=channel_id,
-                image_url=image_record.image_url,
-                caption=caption
+                image_path=image_record.image_url,
+                caption=caption,
+                original_url=original_url
             )
 
             # Update record
@@ -531,8 +646,42 @@ class ImageService:
             if image_record.meta is None:
                 image_record.meta = {}
             image_record.meta["slack_ts"] = response.get("ts")
+            flag_modified(image_record, 'meta')  # Tell SQLAlchemy the JSON field changed
 
             self.db_session.commit()
+
+            # Save message to database for Activity Log
+            try:
+                # Get or create bot team member
+                bot_member = self._get_or_create_bot_team_member()
+
+                # Get or create conversation for this channel
+                conversation = self.conversation_repo.get_or_create_conversation(
+                    team_member_id=bot_member.id,
+                    channel_type="channel",
+                    channel_id=channel_id,
+                    thread_ts=None
+                )
+
+                # Save bot message to database (use caption as content)
+                slack_ts = response.get("ts")
+                message_content = f"[Image] {caption}"  # Prefix to indicate it's an image post
+                self.conversation_repo.add_message(
+                    conversation_id=conversation.id,
+                    sender_type="bot",
+                    content=message_content,
+                    slack_ts=slack_ts,
+                    token_count=len(caption.split()),  # Rough estimate
+                    metadata={
+                        "posted_via": "image_post",
+                        "image_id": image_record.id,
+                        "prompt": image_record.prompt
+                    }
+                )
+                logger.info(f"Saved image post to database (conversation {conversation.id})")
+            except Exception as e:
+                # Log error but don't fail the operation - image was posted successfully
+                logger.error(f"Failed to save image post to database: {e}")
 
             logger.info(f"Image {image_record.id} posted to {channel_id}")
             return True
@@ -563,6 +712,14 @@ class ImageService:
 
         if not image_record or image_record.status != "generated":
             logger.error("Image generation failed, cannot post")
+            # Update task record to failed
+            interval_days = config.get("bot.image_posting.interval_days", 7)
+            update_task_after_execution(
+                job_id="image_post_task",
+                status=TaskStatus.FAILED,
+                error_message="Image generation failed",
+                next_run_interval_days=interval_days
+            )
             return image_record
 
         # Post to channel
@@ -571,10 +728,23 @@ class ImageService:
             channel_id=channel_id
         )
 
+        # Update task record based on success
+        interval_days = config.get("bot.image_posting.interval_days", 7)
         if success:
             logger.info(f"Successfully generated and posted image {image_record.id}")
+            update_task_after_execution(
+                job_id="image_post_task",
+                status=TaskStatus.COMPLETED,
+                next_run_interval_days=interval_days
+            )
         else:
             logger.error(f"Image generated but posting failed: {image_record.id}")
+            update_task_after_execution(
+                job_id="image_post_task",
+                status=TaskStatus.FAILED,
+                error_message="Failed to post image to Slack",
+                next_run_interval_days=interval_days
+            )
 
         return image_record
 

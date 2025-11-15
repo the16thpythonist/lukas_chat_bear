@@ -140,16 +140,38 @@ class EngagementService:
             logger.warning("No eligible users for proactive DM")
             return None
 
+        # Log the pool of eligible users
+        logger.info(f"Random DM selection - Total eligible users: {len(eligible_users)}")
+        for user in eligible_users:
+            last_dm_info = (
+                f"{(datetime.now() - user.last_proactive_dm_at).total_seconds() / 3600:.1f}h ago"
+                if user.last_proactive_dm_at
+                else "never"
+            )
+            logger.info(
+                f"  - {user.display_name} (slack_id={user.slack_user_id}, "
+                f"last_proactive_dm={last_dm_info})"
+            )
+
         # Separate never-contacted from previously-contacted
         never_contacted = [u for u in eligible_users if u.last_proactive_dm_at is None]
         previously_contacted = [u for u in eligible_users if u.last_proactive_dm_at is not None]
 
+        logger.info(
+            f"Random DM selection - Never contacted: {len(never_contacted)}, "
+            f"Previously contacted: {len(previously_contacted)}"
+        )
+
         # If there are never-contacted users, randomly select from them
         if never_contacted:
+            logger.info(f"Selecting randomly from {len(never_contacted)} never-contacted users:")
+            for user in never_contacted:
+                logger.info(f"  - {user.display_name} (slack_id={user.slack_user_id})")
+
             selected = random.choice(never_contacted)
             logger.info(
-                f"Selected never-contacted user for DM: {selected.display_name} "
-                f"(slack_id={selected.slack_user_id})"
+                f"✓ SELECTED: {selected.display_name} (slack_id={selected.slack_user_id}) "
+                f"- Reason: Never contacted before"
             )
             return selected
 
@@ -159,8 +181,8 @@ class EngagementService:
 
         hours_since = (datetime.now() - selected.last_proactive_dm_at).total_seconds() / 3600
         logger.info(
-            f"Selected least recently contacted user for DM: {selected.display_name} "
-            f"(last_contact={hours_since:.1f}h ago)"
+            f"✓ SELECTED: {selected.display_name} (slack_id={selected.slack_user_id}) "
+            f"- Reason: Least recently contacted ({hours_since:.1f}h ago)"
         )
         return selected
 

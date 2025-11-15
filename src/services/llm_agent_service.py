@@ -104,8 +104,14 @@ class LLMAgentService:
         try:
             logger.info(f"Starting MCP connection to {server_name} at {url}...")
 
-            # Enter SSE context and keep it alive
-            async with sse_client(url=url) as (read_stream, write_stream):
+            # Enter SSE context with increased timeouts
+            # timeout: Connection establishment timeout (increased from 5s to 30s)
+            # sse_read_timeout: Maximum idle time on SSE stream (increased from 300s to 3600s = 1 hour)
+            async with sse_client(
+                url=url,
+                timeout=30.0,           # 30 seconds to establish connection
+                sse_read_timeout=3600.0  # 1 hour idle timeout for SSE stream
+            ) as (read_stream, write_stream):
                 # Enter MCP session context
                 async with ClientSession(read_stream, write_stream) as session:
                     self.mcp_sessions[server_name] = session
@@ -137,13 +143,21 @@ class LLMAgentService:
                         logger.info(f"{server_name} MCP connection lifecycle task cancelled")
                         raise
 
-        except httpx.ReadTimeout:
+        except httpx.ReadTimeout as e:
             # Expected timeout on idle SSE connection - this is non-critical
-            logger.debug(f"{server_name} MCP SSE connection timed out (expected for idle connections)")
+            # With 1-hour read timeout, this should rarely happen during normal operation
+            logger.debug(f"{server_name} MCP SSE connection timed out (expected for idle connections): {e}")
             ready_event.set()  # Tools are already registered, this is fine
+        except asyncio.CancelledError:
+            # Expected during bot shutdown
+            logger.info(f"{server_name} MCP connection cancelled during shutdown")
+            ready_event.set()
+            raise  # Re-raise to properly handle cancellation
         except Exception as e:
-            logger.error(f"{server_name} MCP connection lifecycle error: {e}", exc_info=True)
-            logger.warning(f"Agent will run without {server_name} tools")
+            # Log connection errors but don't fail - agent will work without this MCP server
+            logger.warning(f"{server_name} MCP connection error: {e}")
+            logger.debug(f"Full {server_name} error details:", exc_info=True)
+            logger.info(f"Agent will continue without {server_name} tools")
             ready_event.set()  # Unblock initialization even on error
 
     async def initialize_mcp(self) -> None:

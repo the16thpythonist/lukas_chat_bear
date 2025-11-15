@@ -1,0 +1,1322 @@
+openapi: 3.0.3
+info:
+  title: Lukas the Bear Admin Dashboard API
+  description: |
+    REST API for the Lukas the Bear Admin Dashboard. Provides monitoring and control
+    capabilities for the Slack chatbot including activity logs, generated images,
+    scheduled events, and manual control triggers.
+
+    ## Authentication
+    All endpoints (except login) require a valid session cookie obtained through
+    the POST /api/auth/login endpoint. Sessions remain valid until the browser is closed.
+
+    ## Rate Limiting
+    Manual control endpoints are rate-limited to prevent abuse (max 10 requests per hour per session).
+  version: 1.0.0
+  contact:
+    name: Admin Dashboard Support
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://dashboard.lukas-bear.example.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: Session management and authentication
+  - name: Activity Logs
+    description: View bot message history and conversation context
+  - name: Generated Images
+    description: Browse and review AI-generated images
+  - name: Scheduled Events
+    description: View upcoming and completed scheduled tasks
+  - name: Manual Controls
+    description: Trigger bot actions manually
+  - name: Team Members
+    description: View team member information
+
+paths:
+  # Authentication Endpoints
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate admin user
+      description: |
+        Validates the provided password against DASHBOARD_ADMIN_PASSWORD environment variable.
+        On success, creates an authenticated session that remains valid until browser is closed.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: Admin password (must match DASHBOARD_ADMIN_PASSWORD)
+                  minLength: 1
+            examples:
+              validLogin:
+                summary: Valid login attempt
+                value:
+                  password: "secure_admin_password_123"
+      responses:
+        '200':
+          description: Authentication successful
+          headers:
+            Set-Cookie:
+              description: Session cookie for authenticated requests
+              schema:
+                type: string
+                example: session=abc123def456; Path=/; HttpOnly
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Authentication successful"
+        '401':
+          description: Invalid password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidPassword:
+                  value:
+                    error: "Invalid password"
+                    message: "Authentication failed"
+        '500':
+          description: Server misconfiguration (DASHBOARD_ADMIN_PASSWORD not set)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                misconfiguration:
+                  value:
+                    error: "Server misconfiguration"
+                    message: "DASHBOARD_ADMIN_PASSWORD environment variable not set"
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: End authenticated session
+      description: Clears the session cookie and invalidates the current session.
+      operationId: logout
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Logged out successfully"
+
+  /api/auth/session:
+    get:
+      tags:
+        - Authentication
+      summary: Check session status
+      description: Returns whether the current session is authenticated and when login occurred.
+      operationId: checkSession
+      responses:
+        '200':
+          description: Session status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                    description: Whether the session is authenticated
+                    example: true
+                  login_time:
+                    type: string
+                    format: date-time
+                    description: ISO 8601 timestamp of when login occurred
+                    example: "2025-10-28T10:30:00Z"
+              examples:
+                authenticated:
+                  value:
+                    authenticated: true
+                    login_time: "2025-10-28T10:30:00Z"
+                notAuthenticated:
+                  value:
+                    authenticated: false
+                    login_time: null
+
+  # Activity Log Endpoints
+  /api/activity:
+    get:
+      tags:
+        - Activity Logs
+      summary: Get paginated activity log
+      description: |
+        Returns a paginated list of messages sent by Lukas the Bear, with optional filtering
+        by date range, recipient, and channel type. Results are ordered by timestamp descending
+        (most recent first).
+      operationId: getActivityLog
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          example: 50
+        - name: start_date
+          in: query
+          description: Filter messages from this date onwards (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2025-10-01T00:00:00Z"
+        - name: end_date
+          in: query
+          description: Filter messages until this date (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2025-10-28T23:59:59Z"
+        - name: recipient
+          in: query
+          description: Filter by recipient Slack user ID
+          schema:
+            type: string
+          example: "U01234ABCDE"
+        - name: channel_type
+          in: query
+          description: Filter by channel type
+          schema:
+            type: string
+            enum:
+              - dm
+              - channel
+              - thread
+          example: "dm"
+      responses:
+        '200':
+          description: Activity log retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ActivityLogEntry'
+                  total:
+                    type: integer
+                    description: Total number of matching items
+                    example: 247
+                  page:
+                    type: integer
+                    description: Current page number
+                    example: 1
+                  pages:
+                    type: integer
+                    description: Total number of pages
+                    example: 5
+              examples:
+                success:
+                  value:
+                    items:
+                      - id: "msg-123"
+                        conversation_id: "conv-456"
+                        timestamp: "2025-10-28T15:30:00Z"
+                        recipient_user_id: "U01234ABCDE"
+                        recipient_display_name: "John Doe"
+                        channel_type: "dm"
+                        channel_id: "D987654321"
+                        content_preview: "Hey! I hope you're having a great day! Want to chat about..."
+                        token_count: 42
+                    total: 247
+                    page: 1
+                    pages: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/activity/{id}:
+    get:
+      tags:
+        - Activity Logs
+      summary: Get full message details
+      description: |
+        Returns complete details for a specific message including full content,
+        conversation context, and any tool invocations that occurred.
+      operationId: getActivityDetail
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Message ID
+          schema:
+            type: string
+          example: "msg-123"
+      responses:
+        '200':
+          description: Message details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityDetail'
+              examples:
+                success:
+                  value:
+                    id: "msg-123"
+                    conversation_id: "conv-456"
+                    timestamp: "2025-10-28T15:30:00Z"
+                    recipient_user_id: "U01234ABCDE"
+                    recipient_display_name: "John Doe"
+                    channel_type: "dm"
+                    channel_id: "D987654321"
+                    content: "Hey! I hope you're having a great day! Want to chat about your weekend plans?"
+                    token_count: 42
+                    metadata:
+                      tool_invocations: []
+                      model_used: "claude-3-5-sonnet-20241022"
+                    conversation_context:
+                      message_count: 5
+                      last_message_at: "2025-10-28T15:30:00Z"
+                      context_summary: "Friendly conversation about weekend plans"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # Generated Images Endpoints
+  /api/images:
+    get:
+      tags:
+        - Generated Images
+      summary: Get paginated image gallery
+      description: |
+        Returns a paginated list of AI-generated images with thumbnails and metadata.
+        Results are ordered by creation timestamp descending (most recent first).
+      operationId: getImages
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+        - name: start_date
+          in: query
+          description: Filter images from this date onwards (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2025-10-01T00:00:00Z"
+        - name: end_date
+          in: query
+          description: Filter images until this date (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2025-10-28T23:59:59Z"
+        - name: status
+          in: query
+          description: Filter by image status
+          schema:
+            type: string
+            enum:
+              - generated
+              - posted
+              - failed
+          example: "posted"
+      responses:
+        '200':
+          description: Image gallery retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImageSummary'
+                  total:
+                    type: integer
+                    description: Total number of matching items
+                    example: 42
+                  page:
+                    type: integer
+                    description: Current page number
+                    example: 1
+                  pages:
+                    type: integer
+                    description: Total number of pages
+                    example: 3
+              examples:
+                success:
+                  value:
+                    items:
+                      - id: "img-789"
+                        created_at: "2025-10-28T12:00:00Z"
+                        prompt: "A friendly bear enjoying autumn leaves"
+                        status: "posted"
+                        posted_to_channel: "C01234567"
+                        posted_at: "2025-10-28T12:01:30Z"
+                        thumbnail_url: "/api/images/img-789/thumbnail"
+                      - id: "img-790"
+                        created_at: "2025-10-27T18:30:00Z"
+                        prompt: "Celebration with confetti and balloons"
+                        status: "failed"
+                        posted_to_channel: null
+                        posted_at: null
+                        thumbnail_url: "/api/images/img-790/thumbnail"
+                    total: 42
+                    page: 1
+                    pages: 3
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/images/{id}:
+    get:
+      tags:
+        - Generated Images
+      summary: Get full image details
+      description: |
+        Returns complete details for a specific generated image including full resolution URL,
+        generation parameters, cost information, and error messages for failed attempts.
+      operationId: getImageDetail
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Image ID
+          schema:
+            type: string
+          example: "img-789"
+      responses:
+        '200':
+          description: Image details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageDetail'
+              examples:
+                success:
+                  value:
+                    id: "img-789"
+                    created_at: "2025-10-28T12:00:00Z"
+                    prompt: "A friendly bear enjoying autumn leaves in a cozy forest setting"
+                    image_url: "file:///app/data/images/img-789.png"
+                    status: "posted"
+                    posted_to_channel: "C01234567"
+                    posted_at: "2025-10-28T12:01:30Z"
+                    generation_duration_seconds: 8.3
+                    cost_usd: 0.04
+                    error_message: null
+                    metadata:
+                      theme: "seasonal_autumn"
+                      model: "dall-e-3"
+                      size: "1024x1024"
+                      quality: "standard"
+                      slack_message_ts: "1698494490.123456"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/images/{id}/thumbnail:
+    get:
+      tags:
+        - Generated Images
+      summary: Get image thumbnail
+      description: |
+        Returns a JPEG thumbnail (300x300px) of the generated image. Thumbnails are
+        generated on-demand and cached to the filesystem for subsequent requests.
+      operationId: getImageThumbnail
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Image ID
+          schema:
+            type: string
+          example: "img-789"
+      responses:
+        '200':
+          description: Thumbnail image
+          headers:
+            Cache-Control:
+              description: Caching directive
+              schema:
+                type: string
+                example: "max-age=86400"
+            Content-Type:
+              description: Image MIME type
+              schema:
+                type: string
+                example: "image/jpeg"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # Scheduled Events Endpoints
+  /api/events/upcoming:
+    get:
+      tags:
+        - Scheduled Events
+      summary: Get upcoming scheduled events
+      description: |
+        Returns scheduled tasks that are pending execution, ordered by scheduled time
+        (soonest first).
+      operationId: getUpcomingEvents
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of events to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          example: 50
+      responses:
+        '200':
+          description: Upcoming events retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScheduledEvent'
+              examples:
+                success:
+                  value:
+                    items:
+                      - id: "task-101"
+                        job_id: "job_random_dm_20251028_153000"
+                        task_type: "random_dm"
+                        target_type: "user"
+                        target_id: "U01234ABCDE"
+                        scheduled_at: "2025-10-28T15:30:00Z"
+                        executed_at: null
+                        status: "pending"
+                        retry_count: 0
+                        error_message: null
+                        metadata:
+                          trigger_source: "automatic"
+                        created_at: "2025-10-28T08:00:00Z"
+                      - id: "task-102"
+                        job_id: "job_image_post_20251028_180000"
+                        task_type: "image_post"
+                        target_type: "channel"
+                        target_id: "C01234567"
+                        scheduled_at: "2025-10-28T18:00:00Z"
+                        executed_at: null
+                        status: "pending"
+                        retry_count: 0
+                        error_message: null
+                        metadata:
+                          theme: "seasonal_autumn"
+                          trigger_source: "automatic"
+                        created_at: "2025-10-28T08:00:00Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/events/completed:
+    get:
+      tags:
+        - Scheduled Events
+      summary: Get completed/historical events
+      description: |
+        Returns paginated list of scheduled tasks that have been executed, failed, or cancelled,
+        ordered by execution timestamp descending (most recent first).
+      operationId: getCompletedEvents
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          example: 50
+      responses:
+        '200':
+          description: Completed events retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScheduledEvent'
+                  total:
+                    type: integer
+                    description: Total number of matching items
+                    example: 156
+                  page:
+                    type: integer
+                    description: Current page number
+                    example: 1
+                  pages:
+                    type: integer
+                    description: Total number of pages
+                    example: 4
+              examples:
+                success:
+                  value:
+                    items:
+                      - id: "task-100"
+                        job_id: "job_random_dm_20251027_140000"
+                        task_type: "random_dm"
+                        target_type: "user"
+                        target_id: "U98765ZYXWV"
+                        scheduled_at: "2025-10-27T14:00:00Z"
+                        executed_at: "2025-10-27T14:00:03Z"
+                        status: "completed"
+                        retry_count: 0
+                        error_message: null
+                        metadata:
+                          trigger_source: "automatic"
+                          message_sent_ts: "1698417603.123456"
+                        created_at: "2025-10-27T08:00:00Z"
+                      - id: "task-99"
+                        job_id: "job_image_post_20251026_120000"
+                        task_type: "image_post"
+                        target_type: "channel"
+                        target_id: "C01234567"
+                        scheduled_at: "2025-10-26T12:00:00Z"
+                        executed_at: "2025-10-26T12:00:15Z"
+                        status: "failed"
+                        retry_count: 3
+                        error_message: "OpenAI API error: Rate limit exceeded"
+                        metadata:
+                          theme: "celebration"
+                          trigger_source: "automatic"
+                        created_at: "2025-10-26T08:00:00Z"
+                    total: 156
+                    page: 1
+                    pages: 4
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # Manual Control Endpoints
+  /api/controls/generate-image:
+    post:
+      tags:
+        - Manual Controls
+      summary: Manually trigger image generation
+      description: |
+        Triggers Lukas to generate and post an AI image on demand. Optional parameters
+        allow specifying a custom theme and target channel. Action is logged to
+        scheduled_tasks table with task_type "manual_image" for audit trail.
+
+        Rate limited to 10 requests per hour per session.
+      operationId: generateImageManually
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                theme:
+                  type: string
+                  description: Optional theme for image generation (e.g., "celebration", "seasonal_autumn")
+                  example: "celebration"
+                channel_id:
+                  type: string
+                  description: Optional target channel ID (uses default channel if omitted)
+                  example: "C01234567"
+            examples:
+              withTheme:
+                summary: Generate with custom theme
+                value:
+                  theme: "celebration"
+                  channel_id: "C01234567"
+              default:
+                summary: Generate with defaults
+                value: {}
+      responses:
+        '200':
+          description: Image generation triggered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  task_id:
+                    type: string
+                    description: ID of the created scheduled task
+                    example: "task-201"
+                  message:
+                    type: string
+                    example: "Image generation triggered successfully"
+              examples:
+                success:
+                  value:
+                    success: true
+                    task_id: "task-201"
+                    message: "Image generation triggered successfully. Check Generated Images section for results."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                rateLimited:
+                  value:
+                    error: "Rate limit exceeded"
+                    message: "Maximum 10 image generations per hour. Please try again later."
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/controls/send-dm:
+    post:
+      tags:
+        - Manual Controls
+      summary: Manually trigger random DM
+      description: |
+        Triggers Lukas to send a proactive DM to a team member. If user_id is not specified,
+        a random active team member is selected. Action is logged to scheduled_tasks table
+        with task_type "manual_dm" for audit trail.
+
+        Rate limited to 10 requests per hour per session.
+      operationId: sendDmManually
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  description: Optional Slack user ID (random user selected if omitted)
+                  example: "U01234ABCDE"
+            examples:
+              specificUser:
+                summary: Send to specific user
+                value:
+                  user_id: "U01234ABCDE"
+              randomUser:
+                summary: Send to random user
+                value: {}
+      responses:
+        '200':
+          description: Random DM triggered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  task_id:
+                    type: string
+                    description: ID of the created scheduled task
+                    example: "task-202"
+                  message:
+                    type: string
+                    example: "Random DM triggered successfully"
+              examples:
+                success:
+                  value:
+                    success: true
+                    task_id: "task-202"
+                    message: "Random DM triggered successfully. Check Activity Log for sent message."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                rateLimited:
+                  value:
+                    error: "Rate limit exceeded"
+                    message: "Maximum 10 manual DMs per hour. Please try again later."
+        '404':
+          description: No active users available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                noUsers:
+                  value:
+                    error: "No active users"
+                    message: "No active team members available for random DM"
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # Team Members Endpoint
+  /api/team:
+    get:
+      tags:
+        - Team Members
+      summary: Get team members list
+      description: |
+        Returns a list of all team members in the Slack workspace. Used for displaying
+        recipient information in activity logs and for user selection in manual DM triggers.
+      operationId: getTeamMembers
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Team members retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamMember'
+              examples:
+                success:
+                  value:
+                    members:
+                      - slack_user_id: "U01234ABCDE"
+                        display_name: "johndoe"
+                        real_name: "John Doe"
+                      - slack_user_id: "U98765ZYXWV"
+                        display_name: "janesmith"
+                        real_name: "Jane Smith"
+                      - slack_user_id: "U11223FGHIJ"
+                        display_name: "bobwilson"
+                        real_name: "Bob Wilson"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session cookie obtained from POST /api/auth/login
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Short error identifier
+          example: "Unauthorized"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Authentication required"
+      required:
+        - error
+        - message
+
+    ActivityLogEntry:
+      type: object
+      description: Summary of a bot message for activity log listing
+      properties:
+        id:
+          type: string
+          description: Unique message ID
+          example: "msg-123"
+        conversation_id:
+          type: string
+          description: ID of the conversation this message belongs to
+          example: "conv-456"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the message was sent (ISO 8601)
+          example: "2025-10-28T15:30:00Z"
+        recipient_user_id:
+          type: string
+          description: Slack user ID of the recipient
+          example: "U01234ABCDE"
+        recipient_display_name:
+          type: string
+          description: Display name of the recipient
+          example: "John Doe"
+        channel_type:
+          type: string
+          enum:
+            - dm
+            - channel
+            - thread
+          description: Type of channel where message was sent
+          example: "dm"
+        channel_id:
+          type: string
+          nullable: true
+          description: Slack channel ID (null for DMs)
+          example: "D987654321"
+        content_preview:
+          type: string
+          description: First 100 characters of message content
+          example: "Hey! I hope you're having a great day! Want to chat about..."
+        token_count:
+          type: integer
+          description: Number of tokens used for this message
+          example: 42
+      required:
+        - id
+        - conversation_id
+        - timestamp
+        - recipient_user_id
+        - channel_type
+        - content_preview
+        - token_count
+
+    ActivityDetail:
+      type: object
+      description: Full details of a bot message
+      properties:
+        id:
+          type: string
+          description: Unique message ID
+          example: "msg-123"
+        conversation_id:
+          type: string
+          description: ID of the conversation this message belongs to
+          example: "conv-456"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the message was sent (ISO 8601)
+          example: "2025-10-28T15:30:00Z"
+        recipient_user_id:
+          type: string
+          description: Slack user ID of the recipient
+          example: "U01234ABCDE"
+        recipient_display_name:
+          type: string
+          description: Display name of the recipient
+          example: "John Doe"
+        channel_type:
+          type: string
+          enum:
+            - dm
+            - channel
+            - thread
+          description: Type of channel where message was sent
+          example: "dm"
+        channel_id:
+          type: string
+          nullable: true
+          description: Slack channel ID (null for DMs)
+          example: "D987654321"
+        content:
+          type: string
+          description: Full message content
+          example: "Hey! I hope you're having a great day! Want to chat about your weekend plans?"
+        token_count:
+          type: integer
+          description: Number of tokens used for this message
+          example: 42
+        metadata:
+          type: object
+          nullable: true
+          description: Additional message metadata (tool invocations, model used, etc.)
+          example:
+            tool_invocations: []
+            model_used: "claude-3-5-sonnet-20241022"
+        conversation_context:
+          type: object
+          description: Context about the conversation this message belongs to
+          properties:
+            message_count:
+              type: integer
+              description: Total messages in this conversation
+              example: 5
+            last_message_at:
+              type: string
+              format: date-time
+              description: Timestamp of most recent message in conversation
+              example: "2025-10-28T15:30:00Z"
+            context_summary:
+              type: string
+              nullable: true
+              description: Brief summary of conversation context
+              example: "Friendly conversation about weekend plans"
+      required:
+        - id
+        - conversation_id
+        - timestamp
+        - recipient_user_id
+        - channel_type
+        - content
+        - token_count
+
+    ImageSummary:
+      type: object
+      description: Summary of a generated image for gallery listing
+      properties:
+        id:
+          type: string
+          description: Unique image ID
+          example: "img-789"
+        created_at:
+          type: string
+          format: date-time
+          description: When the image was generated (ISO 8601)
+          example: "2025-10-28T12:00:00Z"
+        prompt:
+          type: string
+          description: Prompt used for image generation
+          example: "A friendly bear enjoying autumn leaves"
+        status:
+          type: string
+          enum:
+            - generated
+            - posted
+            - failed
+          description: Current status of the image
+          example: "posted"
+        posted_to_channel:
+          type: string
+          nullable: true
+          description: Slack channel ID where image was posted (null if not posted)
+          example: "C01234567"
+        posted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the image was posted (ISO 8601, null if not posted)
+          example: "2025-10-28T12:01:30Z"
+        thumbnail_url:
+          type: string
+          description: URL to fetch thumbnail (300x300 JPEG)
+          example: "/api/images/img-789/thumbnail"
+      required:
+        - id
+        - created_at
+        - prompt
+        - status
+        - thumbnail_url
+
+    ImageDetail:
+      type: object
+      description: Full details of a generated image
+      properties:
+        id:
+          type: string
+          description: Unique image ID
+          example: "img-789"
+        created_at:
+          type: string
+          format: date-time
+          description: When the image was generated (ISO 8601)
+          example: "2025-10-28T12:00:00Z"
+        prompt:
+          type: string
+          description: Full prompt used for image generation
+          example: "A friendly bear enjoying autumn leaves in a cozy forest setting"
+        image_url:
+          type: string
+          description: Full resolution image URL (file:// or http://)
+          example: "file:///app/data/images/img-789.png"
+        status:
+          type: string
+          enum:
+            - generated
+            - posted
+            - failed
+          description: Current status of the image
+          example: "posted"
+        posted_to_channel:
+          type: string
+          nullable: true
+          description: Slack channel ID where image was posted
+          example: "C01234567"
+        posted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the image was posted (ISO 8601)
+          example: "2025-10-28T12:01:30Z"
+        generation_duration_seconds:
+          type: number
+          format: float
+          nullable: true
+          description: Time taken to generate the image in seconds
+          example: 8.3
+        cost_usd:
+          type: number
+          format: float
+          nullable: true
+          description: Cost of image generation in USD
+          example: 0.04
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if generation or posting failed
+          example: null
+        metadata:
+          type: object
+          nullable: true
+          description: Additional metadata (theme, model, size, quality, slack message timestamp)
+          example:
+            theme: "seasonal_autumn"
+            model: "dall-e-3"
+            size: "1024x1024"
+            quality: "standard"
+            slack_message_ts: "1698494490.123456"
+      required:
+        - id
+        - created_at
+        - prompt
+        - image_url
+        - status
+
+    ScheduledEvent:
+      type: object
+      description: A scheduled or completed task
+      properties:
+        id:
+          type: string
+          description: Unique task ID
+          example: "task-101"
+        job_id:
+          type: string
+          description: APScheduler job ID
+          example: "job_random_dm_20251028_153000"
+        task_type:
+          type: string
+          enum:
+            - random_dm
+            - image_post
+            - cleanup
+            - reminder
+            - manual_image
+            - manual_dm
+          description: Type of scheduled task
+          example: "random_dm"
+        target_type:
+          type: string
+          enum:
+            - user
+            - channel
+            - system
+          description: Type of target for the task
+          example: "user"
+        target_id:
+          type: string
+          nullable: true
+          description: Slack user ID or channel ID (null for system tasks)
+          example: "U01234ABCDE"
+        scheduled_at:
+          type: string
+          format: date-time
+          description: When the task is/was scheduled to execute (ISO 8601)
+          example: "2025-10-28T15:30:00Z"
+        executed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the task was executed (ISO 8601, null if not executed)
+          example: "2025-10-28T15:30:03Z"
+        status:
+          type: string
+          enum:
+            - pending
+            - executing
+            - completed
+            - failed
+            - cancelled
+          description: Current status of the task
+          example: "completed"
+        retry_count:
+          type: integer
+          description: Number of retry attempts made
+          example: 0
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if task failed
+          example: null
+        metadata:
+          type: object
+          nullable: true
+          description: Task-specific metadata (theme, trigger source, result timestamps)
+          example:
+            trigger_source: "manual"
+            theme: "celebration"
+            message_sent_ts: "1698494490.123456"
+        created_at:
+          type: string
+          format: date-time
+          description: When the task record was created (ISO 8601)
+          example: "2025-10-28T08:00:00Z"
+      required:
+        - id
+        - job_id
+        - task_type
+        - target_type
+        - scheduled_at
+        - status
+        - retry_count
+        - created_at
+
+    TeamMember:
+      type: object
+      description: A Slack workspace team member
+      properties:
+        slack_user_id:
+          type: string
+          description: Slack user ID
+          example: "U01234ABCDE"
+        display_name:
+          type: string
+          description: Display name in Slack
+          example: "johndoe"
+        real_name:
+          type: string
+          description: Real name of the user
+          example: "John Doe"
+      required:
+        - slack_user_id
+        - display_name
+        - real_name
+
+  responses:
+    Unauthorized:
+      description: Authentication required or session expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              value:
+                error: "Unauthorized"
+                message: "Authentication required. Please log in."
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notFound:
+              value:
+                error: "Not found"
+                message: "The requested resource does not exist"
+
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            serverError:
+              value:
+                error: "Internal server error"
+                message: "An unexpected error occurred. Please try again later."

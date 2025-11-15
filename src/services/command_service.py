@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from src.repositories.team_member_repo import TeamMemberRepository
+from src.repositories.conversation_repo import ConversationRepository
 from src.repositories.config_repo import ConfigurationRepository
 from src.models.team_member import TeamMember
 from src.models.scheduled_task import ScheduledTask
@@ -66,6 +67,49 @@ class CommandService:
         self.slack_client = slack_client
         self.config_repo = ConfigurationRepository(db_session)
         self.team_member_repo = TeamMemberRepository(db_session)
+        self.conversation_repo = ConversationRepository(db_session)
+
+    def _get_or_create_bot_team_member(self) -> TeamMember:
+        """
+        Get or create a synthetic team member for the bot itself.
+
+        This allows channel posts to be associated with a team member
+        so they appear in the Activity Log.
+
+        Returns:
+            TeamMember representing Lukas the Bear bot
+        """
+        # Use a special Slack user ID for the bot itself
+        # Get bot user ID from environment if available
+        bot_user_id = os.getenv("SLACK_BOT_USER_ID", "LUKAS_BOT")
+
+        return self.team_member_repo.get_or_create(
+            slack_user_id=bot_user_id,
+            display_name="Lukas the Bear (Bot)",
+            real_name="Lukas",
+            is_bot=True
+        )
+
+    def _resolve_channel_id(self, channel: str) -> Optional[str]:
+        """
+        Resolve a channel name or ID to a channel ID.
+
+        Args:
+            channel: Channel name (with or without #) or channel ID
+
+        Returns:
+            Channel ID/name suitable for Slack API (# stripped)
+            None if channel is empty
+
+        Note:
+            The Slack API accepts both channel IDs (C123456) and names (general).
+            We just need to strip the # if present.
+        """
+        if not channel:
+            return None
+
+        # Strip leading # if present
+        return channel.lstrip("#")
 
     async def post_message(
         self,
@@ -123,6 +167,35 @@ class CommandService:
             if response.get("ok"):
                 requester = user.display_name if user else "Lukas (via command)"
                 logger.info(f"Posted message to {channel_id} (requested by: {requester})")
+
+                # Save message to database for Activity Log
+                try:
+                    # Get or create bot team member
+                    bot_member = self._get_or_create_bot_team_member()
+
+                    # Get or create conversation for this channel
+                    conversation = self.conversation_repo.get_or_create_conversation(
+                        team_member_id=bot_member.id,
+                        channel_type="channel",
+                        channel_id=channel_id,
+                        thread_ts=None
+                    )
+
+                    # Save bot message to database
+                    slack_ts = response.get("ts")
+                    self.conversation_repo.add_message(
+                        conversation_id=conversation.id,
+                        sender_type="bot",
+                        content=formatted_message,
+                        slack_ts=slack_ts,
+                        token_count=len(formatted_message.split()),  # Rough estimate
+                        metadata={"posted_via": "post_message_command", "requester": requester}
+                    )
+                    logger.info(f"Saved channel post to database (conversation {conversation.id})")
+                except Exception as e:
+                    # Log error but don't fail the command - message was posted successfully
+                    logger.error(f"Failed to save message to database: {e}")
+
                 return {
                     "success": True,
                     "channel": channel_id,
@@ -564,6 +637,146 @@ class CommandService:
                 "channel": channel,
                 "error": str(e),
                 "message": f"Error generating image: {str(e)}"
+            }
+
+    async def schedule_message(
+        self,
+        message: str,
+        channel: str,
+        when: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        Schedule a one-time message to be posted to a channel (admin only).
+
+        Args:
+            message: Message content to post
+            channel: Channel name (with or without #) or channel ID
+            when: Natural language time expression (e.g., 'in 2 hours', '3pm Friday')
+            user_id: Slack user ID (must be admin)
+
+        Returns:
+            {
+                "success": bool,
+                "message": str,
+                "formatted": str (optional),
+                "event_id": int (optional),
+                "scheduled_time": str (optional),
+                "error": str (optional)
+            }
+        """
+        try:
+            # Get user and check admin status
+            user = self.team_member_repo.get_by_slack_id(user_id)
+            if not user:
+                return {
+                    "success": False,
+                    "message": f"User {user_id} not found",
+                    "channel": channel,
+                    "when": when
+                }
+
+            if not user.is_admin:
+                raise PermissionDeniedError("schedule_message", user.display_name)
+
+            # Resolve channel ID
+            channel_id = self._resolve_channel_id(channel)
+            if not channel_id:
+                return {
+                    "success": False,
+                    "message": f"Could not find channel: {channel}",
+                    "channel": channel,
+                    "when": when,
+                    "error": "Channel not found"
+                }
+
+            # Get channel info for display name
+            channel_info = None
+            if self.slack_client:
+                try:
+                    channel_info = self.slack_client.conversations_info(channel=channel_id)
+                except Exception:
+                    pass
+
+            channel_name = channel_info["channel"]["name"] if channel_info and channel_info.get("ok") else channel
+
+            # Create ScheduledEventService instance
+            from src.services.scheduled_event_service import ScheduledEventService
+            from src.services.scheduler_service import get_scheduler, init_scheduler
+
+            # Get or initialize scheduler (MCP server process may not have it initialized)
+            try:
+                scheduler = get_scheduler()
+            except RuntimeError:
+                logger.info("Initializing scheduler for MCP server process")
+                scheduler = init_scheduler()
+
+            event_service = ScheduledEventService(
+                db_session=self.db,
+                scheduler=scheduler,
+                slack_client=self.slack_client
+            )
+
+            # Create scheduled event
+            event, error = event_service.create_from_natural_language(
+                time_string=when,
+                target_channel_id=channel_id,
+                target_channel_name=f"#{channel_name}",
+                message=message,
+                created_by_user_id=user_id,
+                created_by_user_name=user.display_name
+            )
+
+            if event:
+                logger.info(
+                    f"Admin {user_id} scheduled message for {event.scheduled_time} "
+                    f"in channel #{channel_name}"
+                )
+
+                # Format time for display
+                scheduled_time_str = event.scheduled_time.strftime("%Y-%m-%d %H:%M UTC")
+
+                return {
+                    "success": True,
+                    "message": f"Message scheduled for {scheduled_time_str} in #{channel_name}",
+                    "formatted": (
+                        f"⏰ **Scheduled Message Created** 🐻\n\n"
+                        f"**Channel:** #{channel_name}\n"
+                        f"**Scheduled for:** {scheduled_time_str}\n"
+                        f"**Message:** {message}\n\n"
+                        f"_You can view and manage this in the dashboard._"
+                    ),
+                    "event_id": event.id,
+                    "scheduled_time": scheduled_time_str,
+                    "channel": f"#{channel_name}"
+                }
+            else:
+                logger.error(f"Failed to schedule message: {error}")
+                return {
+                    "success": False,
+                    "message": f"Failed to schedule message: {error}",
+                    "channel": channel,
+                    "when": when,
+                    "error": error
+                }
+
+        except PermissionDeniedError as e:
+            logger.warning(f"Permission denied: {e.message}")
+            return {
+                "success": False,
+                "message": e.message,
+                "channel": channel,
+                "when": when,
+                "error": "Permission denied"
+            }
+        except Exception as e:
+            logger.error(f"Error scheduling message: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"Error scheduling message: {str(e)}",
+                "channel": channel,
+                "when": when,
+                "error": str(e)
             }
 
     # ===== HELPER METHODS =====

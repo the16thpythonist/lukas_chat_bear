@@ -83,3 +83,4 @@ config/config.yml
 
 # Lock files (will be regenerated)
 uv.lock
+dashboard/backend/flask_session/

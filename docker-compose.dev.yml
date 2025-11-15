@@ -32,9 +32,14 @@ services:
       - MCP_SLACK_OPS_URL=http://localhost:9766/sse
       - MCP_SLACK_OPS_PORT=9766
       - MCP_SLACK_OPS_HOST=0.0.0.0
+      # Internal API (dashboard integration)
+      - INTERNAL_API_PORT=5001
     ports:
       # Expose MCP server port for LLM agent access
       - "9766:9766"
+      # Internal API port (NOT exposed to host, only for Docker network)
+    expose:
+      - "5001"
     depends_on:
       web-search-mcp-dev:
         condition: service_healthy
@@ -43,6 +48,64 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dashboard: Admin Web Interface (Development)
+  # Provides monitoring and control capabilities for the bot
+  # NOTE: If you update backend/requirements.txt, rebuild with:
+  #   docker-compose -f docker-compose.dev.yml build dashboard-dev
+  dashboard-dev:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.dev
+    container_name: dashboard-dev
+    env_file:
+      - .env
+    volumes:
+      # Read-only access to bot database
+      - ./data:/app/data:ro
+      # Session storage persistence
+      - dashboard-sessions-dev:/app/sessions
+      # Thumbnail cache persistence
+      - dashboard-thumbnails-dev:/app/thumbnails
+      # Mount source code for live development (backend)
+      - ./dashboard/backend:/app/backend
+      - ./src:/app/src
+      # Mount frontend source for development
+      - ./dashboard/frontend:/app/frontend
+      # Mount dev startup script
+      - ./dashboard/start-dev.sh:/app/start-dev.sh:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DATABASE_PATH=/app/data/lukas.db
+      - SESSION_DIR=/app/sessions
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - FLASK_APP=backend.app:create_app()
+      # Bot API URL for manual controls (internal Docker network)
+      - BOT_API_URL=http://lukas-bear-bot-dev:5001
+    ports:
+      - "8080:8080"
+      # Vite dev server for frontend HMR
+      - "5173:5173"
+    # Override Dockerfile CMD to use dev startup script
+    command: ["/bin/sh", "/app/start-dev.sh"]
+    depends_on:
+      - lukas-bot
+    networks:
+      - lukas-network-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -92,3 +155,7 @@ services:
 networks:
   lukas-network-dev:
     driver: bridge
+
+volumes:
+  dashboard-sessions-dev:
+  dashboard-thumbnails-dev:

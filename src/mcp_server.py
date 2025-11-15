@@ -213,6 +213,43 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["user_id"]
             }
+        ),
+
+        Tool(
+            name="schedule_channel_message",
+            description=(
+                "Schedule a one-time message to be posted to a Slack channel at a future time. "
+                "**ADMIN ONLY - requires admin privileges.** "
+                "Use when an admin asks to: schedule a message, remind the channel, "
+                "post something later, send a message at a specific time, or set up an announcement. "
+                "Supports natural language time expressions like 'in 2 hours', '3pm Friday', 'tomorrow at 2pm', etc. "
+                "Will return an error if the user is not an admin."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message content to post to the channel at the scheduled time"
+                    },
+                    "channel": {
+                        "type": "string",
+                        "description": "Channel name (with or without #) or channel ID where the message will be posted"
+                    },
+                    "when": {
+                        "type": "string",
+                        "description": (
+                            "When to post the message. Supports natural language like "
+                            "'in 2 hours', '3pm Friday', 'tomorrow at 2pm', 'next Monday at 10am', etc."
+                        )
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "Slack user ID of the admin scheduling the message (automatically provided from conversation context - use the ID from the system message)"
+                    }
+                },
+                "required": ["message", "channel", "when", "user_id"]
+            }
         )
     ]
 
@@ -255,6 +292,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await service.generate_image(
                 theme=arguments.get("theme"),
                 channel=arguments.get("channel"),
+                user_id=arguments["user_id"]
+            )
+
+        elif name == "schedule_channel_message":
+            result = await service.schedule_message(
+                message=arguments["message"],
+                channel=arguments["channel"],
+                when=arguments["when"],
                 user_id=arguments["user_id"]
             )
 

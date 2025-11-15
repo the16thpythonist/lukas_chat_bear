@@ -18,6 +18,9 @@ from src.models.team_member import TeamMember
 from src.services.engagement_service import EngagementService
 from src.services.persona_service import PersonaService
 from src.repositories.team_member_repo import TeamMemberRepository
+from src.repositories.conversation_repo import ConversationRepository
+from src.services.scheduler_service import update_task_after_execution
+from src.utils.config_loader import config
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ class ProactiveDMService:
         self.engagement_service = engagement_service or EngagementService(db_session)
         self.persona_service = persona_service or PersonaService()
         self.team_member_repo = TeamMemberRepository(db_session)
+        self.conversation_repo = ConversationRepository(db_session)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -67,9 +71,9 @@ class ProactiveDMService:
         Raises:
             SlackApiError: If Slack API call fails after retries
         """
-        # Open DM conversation
+        # Open DM conversation (reuses existing if one exists)
         logger.info(f"Opening DM conversation with user {user_id}")
-        dm_response = slack_client.conversations_open(users=[user_id])
+        dm_response = await slack_client.conversations_open(users=[user_id])
 
         if not dm_response.get("ok"):
             error_msg = dm_response.get("error", "unknown_error")
@@ -80,11 +84,22 @@ class ProactiveDMService:
             )
 
         dm_channel_id = dm_response["channel"]["id"]
-        logger.info(f"DM channel opened: {dm_channel_id}")
+        # Check if this is a new or existing conversation
+        channel_info = dm_response.get("channel", {})
+        is_new = channel_info.get("is_im", False) and not channel_info.get("created", 0)
+
+        if "created" in channel_info:
+            logger.info(
+                f"DM channel opened: {dm_channel_id} "
+                f"(conversation created: {datetime.fromtimestamp(channel_info['created'])})"
+            )
+        else:
+            logger.info(f"DM channel opened: {dm_channel_id} (reusing existing conversation)")
 
         # Send message
-        logger.info(f"Sending message to channel {dm_channel_id}")
-        msg_response = slack_client.chat_postMessage(
+        logger.info(f"Sending proactive DM to channel {dm_channel_id}")
+        logger.info(f"Message preview: {message[:100]}{'...' if len(message) > 100 else ''}")
+        msg_response = await slack_client.chat_postMessage(
             channel=dm_channel_id, text=message
         )
 
@@ -95,43 +110,16 @@ class ProactiveDMService:
                 message=f"Failed to send message: {error_msg}", response=msg_response
             )
 
+        logger.info(
+            f"✓ Message sent successfully to {dm_channel_id} "
+            f"(timestamp: {msg_response['ts']})"
+        )
+
         return {
             "channel_id": dm_channel_id,
             "message_ts": msg_response["ts"],
         }
 
-    def _create_task_record(
-        self,
-        user_id: str,
-        status: TaskStatus,
-        error_message: Optional[str] = None,
-    ) -> ScheduledTask:
-        """
-        Create a ScheduledTask record to track the DM attempt.
-
-        Args:
-            user_id: Slack user ID
-            status: Task status
-            error_message: Optional error message if failed
-
-        Returns:
-            Created ScheduledTask instance
-        """
-        import uuid
-        task = ScheduledTask(
-            job_id=f"random_dm_{user_id}_{uuid.uuid4().hex[:8]}",
-            task_type=TaskType.RANDOM_DM.value,
-            target_type=TargetType.USER.value,
-            target_id=user_id,
-            scheduled_at=datetime.now(),
-            executed_at=datetime.now() if status != TaskStatus.PENDING else None,
-            status=status.value,
-            error_message=error_message,
-            retry_count=0,
-        )
-        self.db_session.add(task)
-        self.db_session.commit()
-        return task
 
     async def send_random_dm(
         self,
@@ -204,14 +192,52 @@ class ProactiveDMService:
                     f"Successfully sent DM to {user_id} in channel {slack_result['channel_id']}"
                 )
 
+                # Save message to database for Activity Log
+                try:
+                    # Get or create conversation for this DM
+                    conversation = self.conversation_repo.get_or_create_conversation(
+                        team_member_id=recipient.id,
+                        channel_type="dm",
+                        channel_id=slack_result["channel_id"],
+                        thread_ts=None
+                    )
+
+                    # Save bot message to database
+                    self.conversation_repo.add_message(
+                        conversation_id=conversation.id,
+                        sender_type="bot",
+                        content=greeting,
+                        slack_ts=slack_result["message_ts"],
+                        token_count=len(greeting.split()),  # Rough estimate
+                        metadata={
+                            "sent_via": "proactive_dm",
+                            "proactive_type": "random_dm",
+                            "recipient_id": user_id,
+                            "recipient_name": recipient.display_name if recipient.display_name else user_id
+                        }
+                    )
+                    logger.info(f"Saved proactive DM to database (conversation {conversation.id})")
+                except Exception as db_error:
+                    # Log error but don't fail the operation - DM was sent successfully
+                    logger.error(f"Failed to save proactive DM to database: {db_error}")
+                    # Continue with the rest of the flow
+
             except SlackApiError as e:
                 logger.error(f"Slack API error sending DM: {e}")
                 result["error"] = str(e)
-                # Create failed task record
-                task = self._create_task_record(
-                    user_id, TaskStatus.FAILED, error_message=str(e)
+                # Update task record to failed
+                interval_hours = config.get("bot.engagement.random_dm_interval_hours", 24)
+                update_task_after_execution(
+                    job_id="random_dm_task",
+                    status=TaskStatus.FAILED,
+                    error_message=str(e),
+                    next_run_interval_hours=interval_hours,
+                    metadata_update={
+                        "recipient": user_id,
+                        "recipient_name": recipient.display_name if recipient.display_name else user_id,
+                        "attempted_message": greeting[:200]
+                    }
                 )
-                result["task_id"] = task.id
                 raise  # Re-raise to prevent timestamp update
 
             # Step 4: Update user's last_proactive_dm_at timestamp
@@ -222,29 +248,38 @@ class ProactiveDMService:
                 f"Updated timestamp to {result['timestamp_updated']}"
             )
 
-            # Step 5: Create successful task record
-            task = self._create_task_record(user_id, TaskStatus.COMPLETED)
-            result["task_id"] = task.id
+            # Step 5: Update task record to completed
+            interval_hours = config.get("bot.engagement.random_dm_interval_hours", 24)
+            update_task_after_execution(
+                job_id="random_dm_task",
+                status=TaskStatus.COMPLETED,
+                next_run_interval_hours=interval_hours,
+                metadata_update={
+                    "recipient": user_id,
+                    "recipient_name": recipient.display_name if recipient.display_name else user_id,
+                    "message": greeting[:200]  # Truncate to keep metadata reasonable
+                }
+            )
 
             result["success"] = True
             logger.info(f"Random DM workflow completed successfully for user {user_id}")
             return result
 
         except SlackApiError:
-            # Already logged and task record created above
+            # Already logged and task record updated above
             return result
 
         except Exception as e:
             logger.exception(f"Unexpected error in random DM workflow: {e}")
             result["error"] = str(e)
-            if result["user_selected"]:
-                # Create failed task record if we got far enough to select a user
-                task = self._create_task_record(
-                    result["user_selected"],
-                    TaskStatus.FAILED,
-                    error_message=str(e),
-                )
-                result["task_id"] = task.id
+            # Update task record to failed
+            interval_hours = config.get("bot.engagement.random_dm_interval_hours", 24)
+            update_task_after_execution(
+                job_id="random_dm_task",
+                status=TaskStatus.FAILED,
+                error_message=str(e),
+                next_run_interval_hours=interval_hours
+            )
             return result
 
 

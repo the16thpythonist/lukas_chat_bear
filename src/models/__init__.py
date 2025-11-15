@@ -30,6 +30,7 @@ from src.models.conversation import ConversationSession
 from src.models.message import Message
 from src.models.team_member import TeamMember
 from src.models.scheduled_task import ScheduledTask, TaskType, TaskStatus, TargetType
+from src.models.scheduled_event import ScheduledEvent
 from src.models.config import Configuration
 from src.models.engagement_event import EngagementEvent
 from src.models.generated_image import GeneratedImage
@@ -43,6 +44,7 @@ __all__ = [
     "Message",
     "TeamMember",
     "ScheduledTask",
+    "ScheduledEvent",
     "TaskType",
     "TaskStatus",
     "TargetType",

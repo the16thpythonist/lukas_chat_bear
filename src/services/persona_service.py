@@ -9,8 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import pytz
 import yaml
 
+from src.utils.config_loader import config
 from src.utils.logger import logger
 
 
@@ -68,13 +70,30 @@ class PersonaService:
             context: Optional context for prompt customization
 
         Returns:
-            System prompt string
+            System prompt string with current date/time prepended
         """
         base_prompt = self.config.get("system_prompt", "You are Lukas the Bear.")
 
-        # Add any context-specific additions
-        # For now, just return the base prompt
-        return base_prompt
+        # Get timezone from config (with fallback to Germany/Berlin)
+        timezone_str = config.get("bot.engagement.active_hours.timezone", "Germany/Berlin")
+
+        # Handle common timezone name variations (Germany/Berlin -> Europe/Berlin)
+        timezone_str = timezone_str.replace("Germany/", "Europe/")
+
+        try:
+            tz = pytz.timezone(timezone_str)
+            current_time = datetime.now(tz)
+
+            # Format: "October 29, 2025 at 14:30 CEST"
+            formatted_date = current_time.strftime("%B %d, %Y at %H:%M %Z")
+
+            # Prepend date/time to system prompt
+            datetime_header = f"Current date and time: {formatted_date}\n\n"
+            return datetime_header + base_prompt
+
+        except Exception as e:
+            logger.warning(f"Failed to add date/time to system prompt: {e}. Using base prompt only.")
+            return base_prompt
 
     def get_fallback_response(self) -> str:
         """

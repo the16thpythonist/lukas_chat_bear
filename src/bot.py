@@ -13,7 +13,7 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from src.utils.logger import logger
 from src.utils.config_loader import config
-from src.utils.database import check_db_connection
+from src.utils.database import check_db_connection, get_db
 
 
 # Initialize Slack app (ASYNC)
@@ -49,32 +49,96 @@ def register_handlers():
     logger.info("Event handlers registered")
 
 
+# Module-level scheduled task functions (for APScheduler serialization)
+def scheduled_random_dm_task():
+    """
+    Scheduled task wrapper for sending random DMs.
+
+    This function must be at module level for APScheduler serialization.
+    """
+    from src.services.proactive_dm_service import send_random_proactive_dm
+
+    async def _send():
+        with get_db() as db:
+            await send_random_proactive_dm(
+                app=app,
+                db_session=db,
+                slack_client=app.client
+            )
+
+    asyncio.run(_send())
+
+
+def scheduled_image_post_task():
+    """
+    Scheduled task wrapper for posting images.
+
+    This function must be at module level for APScheduler serialization.
+    """
+    from src.services.image_service import image_service
+
+    async def _post():
+        # Get channel from config
+        channel = config.get("bot.image_posting.channel", "#random")
+        if image_service:
+            await image_service.generate_and_post(channel_id=channel)
+
+    asyncio.run(_post())
+
+
 def init_scheduler():
     """
     Initialize APScheduler for background tasks.
     """
-    from src.services.scheduler_service import init_scheduler as setup_scheduler, schedule_image_post_task
+    from src.services.scheduler_service import (
+        init_scheduler as setup_scheduler,
+        schedule_image_post_task,
+        schedule_random_dm_task,
+        restore_scheduled_events,
+        get_scheduler
+    )
+    from src.services.scheduled_event_service import ScheduledEventService
     from src.services.image_service import image_service
-    from src.utils.database import get_db
 
     # Initialize scheduler
     setup_scheduler()
     logger.info("APScheduler initialized")
 
+    # Restore pending scheduled events from database
+    try:
+        with get_db() as db:
+            scheduled_event_service = ScheduledEventService(
+                db_session=db,
+                scheduler=get_scheduler(),
+                slack_client=app.client
+            )
+            restored_count = restore_scheduled_events(scheduled_event_service)
+            logger.info(f"Restored {restored_count} scheduled events")
+    except Exception as e:
+        logger.warning(f"Failed to restore scheduled events: {e}")
+
+    # Schedule random DMs if enabled
+    random_dm_interval = config.get("bot.engagement.random_dm_interval_hours", 24)
+
+    try:
+        schedule_random_dm_task(
+            interval_hours=random_dm_interval,
+            send_random_dm_func=scheduled_random_dm_task
+        )
+        logger.info(f"Random DM scheduled (every {random_dm_interval} hours)")
+    except Exception as e:
+        logger.warning(f"Failed to schedule random DM: {e}")
+
     # Schedule image posting if enabled and configured
-    image_interval_days = int(os.getenv("IMAGE_POST_INTERVAL_DAYS", "7"))
-    image_channel = os.getenv("IMAGE_POST_CHANNEL", "C12345678")  # Default to config
+    image_interval_days = config.get("bot.image_posting.interval_days", 7)
+    image_channel = config.get("bot.image_posting.channel", "#random")
 
     if image_service:
         try:
-            async def post_scheduled_image(channel_id):
-                """Scheduled image posting function."""
-                await image_service.generate_and_post(channel_id=channel_id)
-
             schedule_image_post_task(
                 interval_days=image_interval_days,
                 channel_id=image_channel,
-                post_image_func=post_scheduled_image
+                post_image_func=scheduled_image_post_task
             )
             logger.info(f"Image posting scheduled (every {image_interval_days} days to {image_channel})")
         except Exception as e:

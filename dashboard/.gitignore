@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+env/
+
+# Flask
+instance/
+.webassets-cache
+flask_session/
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Vite / Build
+dist/
+dist-ssr/
+*.local
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+coverage/
+*.cover
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database (dashboard only reads)
+*.db
+*.sqlite
+*.sqlite3
+
+# Sessions and cache
+sessions/
+thumbnails/
+*.pid
+
+# OS
+Thumbs.db
+.DS_Store
