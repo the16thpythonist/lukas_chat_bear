@@ -377,10 +377,13 @@ def engagement_config(test_session: Session) -> list[Configuration]:
     - random_dm_interval_hours: 24
     - active_hours: {"start_hour": 8, "end_hour": 18}
 
+    Also patches the config loader to use these test values instead of config.yml.
+
     Returns:
         List of Configuration instances committed to test database
     """
     import json
+    from unittest.mock import patch
 
     configs = [
         Configuration(
@@ -406,7 +409,27 @@ def engagement_config(test_session: Session) -> list[Configuration]:
     test_session.add_all(configs)
     test_session.commit()
 
-    return configs
+    # Patch config loader to return test values
+    test_config = {
+        "bot": {
+            "engagement": {
+                "thread_response_probability": 0.20,
+                "reaction_probability": 0.15,
+                "active_hours": {
+                    "start_hour": 8,
+                    "end_hour": 18,
+                    "timezone": "UTC"
+                }
+            },
+            "random_dm": {
+                "interval_hours": 24
+            }
+        }
+    }
+
+    # Patch the config object used by EngagementService
+    with patch('src.utils.config_loader.config', test_config):
+        yield configs
 
 
 @pytest.fixture(scope="function")
@@ -426,8 +449,8 @@ def mock_slack_client():
 
     client = Mock()
 
-    # Mock conversations_replies for thread fetching
-    client.conversations_replies = Mock(return_value={
+    # Mock conversations_replies for thread fetching (async method)
+    client.conversations_replies = AsyncMock(return_value={
         "messages": [
             {"user": "U11111", "text": "Question", "ts": "1000.0"},
             {"user": "U22222", "text": "Answer", "ts": "1000.1"},
@@ -435,11 +458,11 @@ def mock_slack_client():
         ]
     })
 
-    # Mock reactions_add for emoji reactions
-    client.reactions_add = Mock(return_value={"ok": True})
+    # Mock reactions_add for emoji reactions (async method)
+    client.reactions_add = AsyncMock(return_value={"ok": True})
 
-    # Mock chat_postMessage for sending messages
-    client.chat_postMessage = Mock(return_value={
+    # Mock chat_postMessage for sending messages (async method)
+    client.chat_postMessage = AsyncMock(return_value={
         "ok": True,
         "ts": "1234567890.123456",
         "message": {"text": "Response"}
@@ -571,10 +594,10 @@ def mock_slack_client_for_dm(mock_slack_client):
     Returns:
         Mock Slack client configured for DM testing
     """
-    from unittest.mock import Mock
+    from unittest.mock import AsyncMock
 
-    # Mock conversations_open for DM creation
-    mock_slack_client.conversations_open = Mock(return_value={
+    # Mock conversations_open for DM creation (async method)
+    mock_slack_client.conversations_open = AsyncMock(return_value={
         "ok": True,
         "channel": {
             "id": "D12345TEST",

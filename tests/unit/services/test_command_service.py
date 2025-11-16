@@ -130,9 +130,14 @@ class TestCreateReminder:
     async def test_create_reminder_duration_based(self, command_service, mock_regular_user, mock_db_session):
         """Test creating a reminder with duration (e.g., '30 minutes')."""
         # Setup
-        command_service.team_member_repo.get_by_slack_user_id = Mock(return_value=mock_regular_user)
+        command_service.team_member_repo.get_by_slack_id = Mock(return_value=mock_regular_user)
 
         with patch('src.services.command_service.scheduler') as mock_scheduler:
+            # Mock add_job to return a job object and avoid serialization
+            mock_job = Mock()
+            mock_job.id = "job_123"
+            mock_scheduler.add_job.return_value = mock_job
+
             # Execute
             result = await command_service.create_reminder(
                 task="check the build",
@@ -151,9 +156,14 @@ class TestCreateReminder:
     async def test_create_reminder_time_based(self, command_service, mock_regular_user, mock_db_session):
         """Test creating a reminder with specific time (e.g., '3pm')."""
         # Setup
-        command_service.team_member_repo.get_by_slack_user_id = Mock(return_value=mock_regular_user)
+        command_service.team_member_repo.get_by_slack_id = Mock(return_value=mock_regular_user)
 
         with patch('src.services.command_service.scheduler') as mock_scheduler:
+            # Mock add_job to return a job object and avoid serialization
+            mock_job = Mock()
+            mock_job.id = "job_456"
+            mock_scheduler.add_job.return_value = mock_job
+
             # Execute
             result = await command_service.create_reminder(
                 task="review PRs",
@@ -171,7 +181,7 @@ class TestCreateReminder:
     async def test_create_reminder_invalid_format(self, command_service, mock_regular_user):
         """Test creating a reminder with invalid time format."""
         # Setup
-        command_service.team_member_repo.get_by_slack_user_id = Mock(return_value=mock_regular_user)
+        command_service.team_member_repo.get_by_slack_id = Mock(return_value=mock_regular_user)
 
         # Execute
         result = await command_service.create_reminder(
@@ -272,7 +282,7 @@ class TestUpdateConfig:
     async def test_update_config_as_non_admin(self, command_service, mock_regular_user):
         """Test updating configuration as non-admin (should fail)."""
         # Setup
-        command_service.team_member_repo.get_by_slack_user_id = Mock(return_value=mock_regular_user)
+        command_service.team_member_repo.get_by_slack_id = Mock(return_value=mock_regular_user)
 
         # Execute
         result = await command_service.update_config(
@@ -281,9 +291,10 @@ class TestUpdateConfig:
             user_id="U_USER"
         )
 
-        # Assert
+        # Assert - should return error instead of raising exception
         assert result["success"] is False
-        assert "Permission denied" in result["error"]
+        assert result["error"] == "Permission denied"
+        assert "admin privileges" in result["message"]
 
     @pytest.mark.asyncio
     async def test_update_config_invalid_value(self, command_service, mock_admin_user):
@@ -336,7 +347,7 @@ class TestGenerateImage:
     async def test_generate_image_as_non_admin(self, command_service, mock_regular_user):
         """Test generating image as non-admin (should fail)."""
         # Setup
-        command_service.team_member_repo.get_by_slack_user_id = Mock(return_value=mock_regular_user)
+        command_service.team_member_repo.get_by_slack_id = Mock(return_value=mock_regular_user)
 
         # Execute
         result = await command_service.generate_image(
@@ -345,9 +356,10 @@ class TestGenerateImage:
             user_id="U_USER"
         )
 
-        # Assert
+        # Assert - should return error instead of raising exception
         assert result["success"] is False
-        assert "Permission denied" in result["error"]
+        assert result["error"] == "Permission denied"
+        assert "admin privileges" in result["message"]
 
 
 class TestHelperMethods:

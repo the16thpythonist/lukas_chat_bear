@@ -556,8 +556,10 @@ Consider Lukas the Bear's friendly, supportive personality when choosing."""
             Emoji name that was added, or None on error
         """
         try:
-            # Select appropriate emoji
-            emoji = self.engagement_service.select_emoji_reaction()
+            # Select appropriate emoji from available options
+            available_emojis = self.engagement_service.get_available_emojis()
+            import random
+            emoji = random.choice(available_emojis) if available_emojis else 'bear'
 
             # Add reaction via Slack API
             await self.app.client.reactions_add(

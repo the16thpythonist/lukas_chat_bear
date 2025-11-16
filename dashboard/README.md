@@ -103,6 +103,103 @@ frontend/
     └── e2e/            # Playwright E2E tests
 ```
 
+## Slack OAuth Installation
+
+The dashboard provides an OAuth endpoint for installing the Slack app on new workspaces. When a user authorizes the app, tokens are automatically saved to the filesystem for manual configuration.
+
+### Setup OAuth
+
+1. **Configure Slack App Credentials** in `.env`:
+
+```bash
+SLACK_CLIENT_ID=1234567890.1234567890
+SLACK_CLIENT_SECRET=abcdef1234567890abcdef1234567890
+SLACK_REDIRECT_URI=https://your-domain.com/api/oauth/callback  # Optional
+OAUTH_TOKENS_DIR=/app/data/oauth_tokens  # Optional, defaults to this path
+```
+
+2. **Configure Redirect URL in Slack App Settings**:
+   - Go to [Slack API Dashboard](https://api.slack.com/apps)
+   - Select your app → OAuth & Permissions
+   - Add Redirect URL: `https://your-domain.com/api/oauth/callback`
+
+3. **Generate Installation URL**:
+
+```bash
+# Get installation URL
+curl http://localhost:8080/api/oauth/install
+
+# Response includes install_url:
+# https://slack.com/oauth/v2/authorize?client_id=YOUR_CLIENT_ID
+```
+
+4. **Install on Workspace**:
+   - User clicks "Add to Slack" button with the installation URL
+   - User authorizes app on their workspace
+   - Slack redirects to `/api/oauth/callback` with temporary code
+   - Dashboard exchanges code for tokens
+
+5. **Retrieve Tokens**:
+
+   **From Console Logs**:
+   ```bash
+   docker logs dashboard-dev -f
+   # Look for output:
+   # ========================================
+   # SLACK OAUTH INSTALLATION SUCCESSFUL
+   # ========================================
+   # Team: Workspace Name (T012345)
+   # Bot Token: YOUR_BOT_TOKEN_WILL_APPEAR_HERE
+   # ...
+   ```
+
+   **From Filesystem**:
+   ```bash
+   # List saved token files
+   ls -la data/oauth_tokens/
+
+   # View token file
+   cat data/oauth_tokens/tokens_T012345_20250116_143022.json
+   ```
+
+6. **Manual Configuration**:
+   - Copy the `xoxb-*` token from logs or file
+   - Update your bot's `.env` file with the new token
+   - Restart the bot to use the new workspace
+
+### OAuth Endpoints
+
+- `GET /api/oauth/callback` - OAuth redirect handler (called by Slack)
+- `GET /api/oauth/install` - Get installation URL and configuration info
+
+### OAuth Token Files
+
+Token files are saved in JSON format:
+
+```json
+{
+  "ok": true,
+  "access_token": "YOUR_ACTUAL_BOT_TOKEN_HERE",
+  "token_type": "bot",
+  "scope": "chat:write,users:read,channels:read",
+  "bot_user_id": "U012345ABCD",
+  "app_id": "A012345WXYZ",
+  "team": {
+    "id": "T12345",
+    "name": "My Workspace"
+  },
+  "authed_user": {
+    "id": "U67890"
+  },
+  "is_enterprise_install": false,
+  "installed_at": "2025-01-16T14:30:22Z"
+}
+```
+
+Filename format: `tokens_{team_id}_{timestamp}.json`
+
+**Security Note**: Token files contain sensitive credentials. Ensure proper file permissions and do not commit them to version control.
+
 ## Environment Variables
 
 Required in `.env`:
@@ -110,6 +207,12 @@ Required in `.env`:
 ```bash
 # Dashboard Authentication
 DASHBOARD_ADMIN_PASSWORD=your-secure-password-here
+
+# Slack OAuth (for app installation)
+SLACK_CLIENT_ID=1234567890.1234567890          # Optional: Required for OAuth
+SLACK_CLIENT_SECRET=abcdef1234567890abcdef     # Optional: Required for OAuth
+SLACK_REDIRECT_URI=https://your-domain.com/api/oauth/callback  # Optional
+OAUTH_TOKENS_DIR=/app/data/oauth_tokens        # Optional
 
 # Bot Configuration (already configured)
 SLACK_BOT_TOKEN=xoxb-...
@@ -145,6 +248,10 @@ OPENAI_API_KEY=sk-...
 
 ### Team
 - `GET /api/team` - List team members (for DM dropdown)
+
+### OAuth
+- `GET /api/oauth/callback` - OAuth redirect handler (receives code from Slack)
+- `GET /api/oauth/install` - Get installation URL and configuration info
 
 See `specs/002-web-dashboard/contracts/openapi.yaml` for full API specification.
 

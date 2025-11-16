@@ -84,3 +84,15 @@ def register_routes(app):
         logger.error(f"❌ Error registering scheduled events routes: {e}")
         import traceback
         traceback.print_exc()
+
+    # Slack OAuth routes
+    try:
+        from backend.routes.oauth import oauth_bp
+        app.register_blueprint(oauth_bp, url_prefix='/api/oauth')
+        logger.info("✓ Registered OAuth routes")
+    except ImportError as e:
+        logger.warning(f"⚠️  OAuth routes not yet implemented: {e}")
+    except Exception as e:
+        logger.error(f"❌ Error registering OAuth routes: {e}")
+        import traceback
+        traceback.print_exc()

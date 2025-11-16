@@ -49,41 +49,9 @@ def register_handlers():
     logger.info("Event handlers registered")
 
 
-# Module-level scheduled task functions (for APScheduler serialization)
-def scheduled_random_dm_task():
-    """
-    Scheduled task wrapper for sending random DMs.
-
-    This function must be at module level for APScheduler serialization.
-    """
-    from src.services.proactive_dm_service import send_random_proactive_dm
-
-    async def _send():
-        with get_db() as db:
-            await send_random_proactive_dm(
-                app=app,
-                db_session=db,
-                slack_client=app.client
-            )
-
-    asyncio.run(_send())
-
-
-def scheduled_image_post_task():
-    """
-    Scheduled task wrapper for posting images.
-
-    This function must be at module level for APScheduler serialization.
-    """
-    from src.services.image_service import image_service
-
-    async def _post():
-        # Get channel from config
-        channel = config.get("bot.image_posting.channel", "#random")
-        if image_service:
-            await image_service.generate_and_post(channel_id=channel)
-
-    asyncio.run(_post())
+# Import scheduled task functions from separate module (not __main__)
+# This prevents APScheduler serialization issues when restoring jobs from database
+from src.scheduled_tasks import scheduled_random_dm_task, scheduled_image_post_task
 
 
 def init_scheduler():

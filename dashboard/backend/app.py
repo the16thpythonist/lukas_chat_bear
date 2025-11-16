@@ -121,6 +121,16 @@ def _perform_startup_checks(app):
             "Make sure the bot is running and has created the database."
         )
 
+    # Check OAuth tokens directory
+    oauth_tokens_dir = Path(app.config.get('OAUTH_TOKENS_DIR', '/app/data/oauth_tokens'))
+    if not oauth_tokens_dir.exists():
+        try:
+            oauth_tokens_dir.mkdir(parents=True, exist_ok=True)
+            os.chmod(oauth_tokens_dir, 0o755)
+            app.logger.info(f"✓ Created OAuth tokens directory: {oauth_tokens_dir}")
+        except Exception as e:
+            app.logger.warning(f"⚠️  Failed to create OAuth tokens directory: {e}")
+
     app.logger.info("✓ Startup checks complete")
 
 

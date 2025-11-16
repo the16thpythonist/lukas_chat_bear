@@ -2,6 +2,7 @@
 Unit tests for ScheduledEventService
 """
 
+import os
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import Mock, MagicMock, patch, call
@@ -411,7 +412,7 @@ class TestCancelEvent:
 class TestExecuteEvent:
     """Tests for _execute_event method."""
 
-    def test_execute_event_success(self, service, mock_slack_client):
+    def test_execute_event_success(self, db_session, service, mock_slack_client):
         """Test successfully executing an event."""
         # Create event
         scheduled_time = datetime.utcnow() + timedelta(hours=1)
@@ -422,8 +423,20 @@ class TestExecuteEvent:
             message='Test message'
         )
 
-        # Execute event
-        service._execute_event(event.id)
+        # Execute event using module-level function
+        from src.services.scheduled_event_service import execute_scheduled_event
+        from contextlib import contextmanager
+
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with patch.dict('os.environ', {'SLACK_BOT_TOKEN': 'test-token'}, clear=False):
+            with patch('src.utils.database.get_db', mock_get_db):
+                with patch('slack_sdk.WebClient') as mock_web_client:
+                    mock_web_client.return_value = mock_slack_client
+                    mock_slack_client.chat_postMessage.return_value = {'ok': True}
+                    execute_scheduled_event(event.id)
 
         # Verify message was posted
         mock_slack_client.chat_postMessage.assert_called_once_with(
@@ -431,12 +444,13 @@ class TestExecuteEvent:
             text='Test message'
         )
 
-        # Verify event marked as completed
+        # Refresh to get latest state
+        db_session.expire_all()
         executed = service.get_event(event.id)
         assert executed.status == 'completed'
         assert executed.executed_at is not None
 
-    def test_execute_event_slack_error(self, service, mock_slack_client):
+    def test_execute_event_slack_error(self, db_session, service, mock_slack_client):
         """Test executing event when Slack API returns error."""
         # Create event
         scheduled_time = datetime.utcnow() + timedelta(hours=1)
@@ -453,15 +467,27 @@ class TestExecuteEvent:
             'error': 'channel_not_found'
         }
 
-        # Execute event
-        service._execute_event(event.id)
+        # Execute event using module-level function
+        from src.services.scheduled_event_service import execute_scheduled_event
+        from contextlib import contextmanager
 
-        # Verify event marked as failed
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with patch.dict('os.environ', {'SLACK_BOT_TOKEN': 'test-token'}, clear=False):
+            with patch('src.utils.database.get_db', mock_get_db):
+                with patch('slack_sdk.WebClient') as mock_web_client:
+                    mock_web_client.return_value = mock_slack_client
+                    execute_scheduled_event(event.id)
+
+        # Refresh to get latest state
+        db_session.expire_all()
         executed = service.get_event(event.id)
         assert executed.status == 'failed'
         assert executed.error_message == 'channel_not_found'
 
-    def test_execute_event_slack_exception(self, service, mock_slack_client):
+    def test_execute_event_slack_exception(self, db_session, service, mock_slack_client):
         """Test executing event when Slack client raises exception."""
         # Create event
         scheduled_time = datetime.utcnow() + timedelta(hours=1)
@@ -475,10 +501,22 @@ class TestExecuteEvent:
         # Mock Slack exception
         mock_slack_client.chat_postMessage.side_effect = Exception("Network error")
 
-        # Execute event
-        service._execute_event(event.id)
+        # Execute event using module-level function
+        from src.services.scheduled_event_service import execute_scheduled_event
+        from contextlib import contextmanager
 
-        # Verify event marked as failed
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with patch.dict('os.environ', {'SLACK_BOT_TOKEN': 'test-token'}, clear=False):
+            with patch('src.utils.database.get_db', mock_get_db):
+                with patch('slack_sdk.WebClient') as mock_web_client:
+                    mock_web_client.return_value = mock_slack_client
+                    execute_scheduled_event(event.id)
+
+        # Refresh to get latest state
+        db_session.expire_all()
         executed = service.get_event(event.id)
         assert executed.status == 'failed'
         assert 'Network error' in executed.error_message
@@ -486,7 +524,8 @@ class TestExecuteEvent:
     def test_execute_event_not_found(self, service):
         """Test executing non-existent event."""
         # Should not raise exception
-        service._execute_event(999)
+        from src.services.scheduled_event_service import execute_scheduled_event
+        execute_scheduled_event(999)  # Should not raise
 
     def test_execute_event_already_completed(self, service, mock_slack_client):
         """Test executing already completed event (should skip)."""
@@ -500,8 +539,11 @@ class TestExecuteEvent:
         )
         service.repo.mark_completed(event.id)
 
-        # Try to execute again
-        service._execute_event(event.id)
+        # Try to execute again using module-level function
+        from src.services.scheduled_event_service import execute_scheduled_event
+        with patch('slack_sdk.WebClient') as mock_web_client:
+            mock_web_client.return_value = mock_slack_client
+            execute_scheduled_event(event.id)
 
         # Verify Slack not called
         mock_slack_client.chat_postMessage.assert_not_called()
@@ -522,13 +564,25 @@ class TestExecuteEvent:
             message='Test message'
         )
 
-        # Execute event
-        service._execute_event(event.id)
+        # Execute event using module-level function with no Slack token
+        from src.services.scheduled_event_service import execute_scheduled_event
+        from contextlib import contextmanager
 
-        # Verify event marked as failed
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        # Need to keep database env vars but remove SLACK_BOT_TOKEN
+        env_without_slack = {k: v for k, v in os.environ.items() if k != 'SLACK_BOT_TOKEN'}
+        with patch.dict('os.environ', env_without_slack, clear=True):
+            with patch('src.utils.database.get_db', mock_get_db):
+                execute_scheduled_event(event.id)
+
+        # Refresh the event from database
+        db_session.expire_all()
         executed = service.get_event(event.id)
         assert executed.status == 'failed'
-        assert 'Slack client not available' in executed.error_message
+        assert 'Slack token not available' in executed.error_message
 
 
 class TestQueryMethods:

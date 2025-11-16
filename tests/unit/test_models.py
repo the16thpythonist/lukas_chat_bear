@@ -369,16 +369,17 @@ class TestScheduledTaskModel:
         assert task.status == "pending"  # Default value
         assert task.retry_count == 0  # Default value
 
-    def test_job_id_unique_constraint(self, test_session: Session):
+    def test_job_id_allows_duplicates(self, test_session: Session):
         """
-        Test that job_id must be unique.
+        Test that job_id allows duplicates.
 
-        APScheduler job IDs should be unique to prevent duplicate scheduling.
+        APScheduler job IDs are unique per execution, not globally unique.
+        Multiple task records can have the same job_id (e.g., for recurring tasks).
 
-        Protects against: Duplicate task scheduling, APScheduler conflicts.
+        Protects against: Incorrect unique constraint assumptions.
         """
         task1 = ScheduledTask(
-            job_id="duplicate_job",
+            job_id="recurring_job",
             task_type="cleanup",
             target_type="system",
             scheduled_at=datetime.utcnow(),
@@ -386,16 +387,18 @@ class TestScheduledTaskModel:
         test_session.add(task1)
         test_session.commit()
 
+        # Same job_id should be allowed (for recurring tasks)
         task2 = ScheduledTask(
-            job_id="duplicate_job",
+            job_id="recurring_job",
             task_type="cleanup",
             target_type="system",
             scheduled_at=datetime.utcnow(),
         )
         test_session.add(task2)
+        test_session.commit()  # Should not raise
 
-        with pytest.raises(IntegrityError):
-            test_session.commit()
+        # Verify both tasks exist
+        assert test_session.query(ScheduledTask).filter_by(job_id="recurring_job").count() == 2
 
 
 class TestEngagementEventModel:

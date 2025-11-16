@@ -39,13 +39,15 @@ class Config:
     SESSION_USE_SIGNER = True  # Sign session cookies for security
     SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access to cookies
     SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection
-    SESSION_COOKIE_SECURE = os.getenv('FLASK_ENV', 'production') == 'production'  # HTTPS only in production
+    # Allow override via SESSION_COOKIE_SECURE env var (set to 'false' for HTTP access)
+    SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
 
     # Flask configuration
     SECRET_KEY = os.getenv('SECRET_KEY', os.urandom(32).hex())
 
     # CORS configuration
-    CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5173').split(',')
+    # Allow both development (Vite) and production (same-origin) requests
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://localhost:8080').split(',')
     CORS_SUPPORTS_CREDENTIALS = True
 
     # Rate limiting configuration
@@ -61,6 +63,21 @@ class Config:
     FLASK_ENV = os.getenv('FLASK_ENV', 'production')
     DEBUG = FLASK_ENV == 'development'
 
+    # Slack OAuth configuration
+    SLACK_CLIENT_ID = os.getenv('SLACK_CLIENT_ID')
+    SLACK_CLIENT_SECRET = os.getenv('SLACK_CLIENT_SECRET')
+    SLACK_REDIRECT_URI = os.getenv('SLACK_REDIRECT_URI')  # Optional
+
+    # OAuth tokens output directory
+    OAUTH_TOKENS_DIR = os.getenv('OAUTH_TOKENS_DIR', '/app/data/oauth_tokens')
+
+    # Warn if OAuth credentials are not configured
+    if not SLACK_CLIENT_ID or not SLACK_CLIENT_SECRET:
+        print(
+            "⚠️  WARNING: Slack OAuth credentials not configured. "
+            "Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET to enable OAuth installation endpoint."
+        )
+
 
 class DevelopmentConfig(Config):
     """Development configuration."""
@@ -71,7 +88,7 @@ class DevelopmentConfig(Config):
 class ProductionConfig(Config):
     """Production configuration."""
     DEBUG = False
-    SESSION_COOKIE_SECURE = True  # Require HTTPS
+    # SESSION_COOKIE_SECURE inherited from Config (can be overridden via env var)
 
 
 # Configuration dictionary

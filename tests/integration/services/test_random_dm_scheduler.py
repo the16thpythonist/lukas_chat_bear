@@ -80,7 +80,7 @@ class TestSchedulerIntegrationForRandomDM:
         job2 = schedule_random_dm_task(interval_hours=12, send_random_dm_func=mock_func2)
 
         # Assert: Only one job exists
-        all_jobs = scheduler.get_jobs()
+        all_jobs = get_scheduler().get_jobs()
         random_dm_jobs = [j for j in all_jobs if j.id == "random_dm_task"]
         assert len(random_dm_jobs) == 1
 
@@ -90,7 +90,7 @@ class TestSchedulerIntegrationForRandomDM:
         assert job2.trigger.interval.total_seconds() == 12 * 3600
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_random_dm_task_persists_across_scheduler_restart(self, test_db_path):
         """
@@ -105,20 +105,20 @@ class TestSchedulerIntegrationForRandomDM:
         mock_func = Mock()
         schedule_random_dm_task(interval_hours=24, send_random_dm_func=mock_func)
 
-        jobs_before = scheduler.get_jobs()
+        jobs_before = get_scheduler().get_jobs()
         assert len([j for j in jobs_before if j.id == "random_dm_task"]) == 1
 
         # Act: Shutdown and restart
-        scheduler.shutdown()
+        get_scheduler().shutdown()
         init_scheduler(db_path=str(test_db_path))
 
         # Assert: Job still exists
-        jobs_after = scheduler.get_jobs()
+        jobs_after = get_scheduler().get_jobs()
         random_dm_jobs = [j for j in jobs_after if j.id == "random_dm_task"]
         assert len(random_dm_jobs) == 1
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_get_scheduled_task_info_returns_correct_data(self, test_db_path):
         """
@@ -142,7 +142,7 @@ class TestSchedulerIntegrationForRandomDM:
         assert task_info["next_run_time"] is not None
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_remove_scheduled_task_deletes_job(self, test_db_path):
         """
@@ -168,7 +168,7 @@ class TestSchedulerIntegrationForRandomDM:
         assert get_scheduled_task_info("random_dm_task") is None
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_schedule_with_different_intervals(self, test_db_path):
         """
@@ -195,7 +195,7 @@ class TestSchedulerIntegrationForRandomDM:
             assert actual_seconds == expected_seconds
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
 
 class TestSchedulerErrorHandling:
@@ -216,7 +216,7 @@ class TestSchedulerErrorHandling:
             schedule_random_dm_task(interval_hours=24, send_random_dm_func=None)
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_schedule_with_invalid_interval_handles_gracefully(self, test_db_path):
         """
@@ -242,7 +242,7 @@ class TestSchedulerErrorHandling:
             pass
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_get_info_for_nonexistent_task_returns_none(self, test_db_path):
         """
@@ -261,7 +261,7 @@ class TestSchedulerErrorHandling:
         assert task_info is None
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_remove_nonexistent_task_returns_false(self, test_db_path):
         """
@@ -280,7 +280,7 @@ class TestSchedulerErrorHandling:
         assert result is False
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
 
 class TestSchedulerConcurrency:
@@ -299,21 +299,21 @@ class TestSchedulerConcurrency:
         mock_func = Mock()
         schedule_random_dm_task(interval_hours=24, send_random_dm_func=mock_func)
 
-        jobs_from_first = scheduler.get_jobs()
+        jobs_from_first = get_scheduler().get_jobs()
         first_job_count = len(jobs_from_first)
 
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
         # Act: Second scheduler instance
         init_scheduler(db_path=str(test_db_path))
-        jobs_from_second = scheduler.get_jobs()
+        jobs_from_second = get_scheduler().get_jobs()
         second_job_count = len(jobs_from_second)
 
         # Assert: Same jobs visible
         assert second_job_count == first_job_count
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
 
 class TestSchedulerConfiguration:
@@ -332,11 +332,11 @@ class TestSchedulerConfiguration:
 
         # Assert: Check scheduler timezone
         # Note: Default should be UTC for consistency
-        assert scheduler.timezone is not None
+        assert get_scheduler().timezone is not None
         # Exact timezone check depends on configuration
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_scheduler_starts_successfully(self, test_db_path):
         """
@@ -353,7 +353,7 @@ class TestSchedulerConfiguration:
         assert scheduler.running is True
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
     def test_scheduler_shutdown_cleans_up(self, test_db_path):
         """
@@ -368,7 +368,7 @@ class TestSchedulerConfiguration:
         assert scheduler.running is True
 
         # Act
-        scheduler.shutdown()
+        get_scheduler().shutdown()
 
         # Assert
         assert scheduler.running is False
@@ -429,4 +429,4 @@ class TestSchedulerWithRealDMFunction:
         assert retrieved_job.func == mock_func
 
         # Cleanup
-        scheduler.shutdown()
+        get_scheduler().shutdown()
