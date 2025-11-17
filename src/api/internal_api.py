@@ -84,6 +84,7 @@ def initialize_services():
             slack_client = slack_client_async  # Default to async
 
             # Create minimal app instance (we don't need full Socket Mode for API calls)
+            # Don't pass oauth_settings to avoid OAuth mode when CLIENT_ID/SECRET are in env
             slack_app = App(token=slack_token)
             logger.debug("Slack clients initialized for internal API (sync + async)")
 

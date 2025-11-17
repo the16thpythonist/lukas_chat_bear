@@ -1,0 +1,41 @@
+# Caddy configuration for Cloudflare Origin Certificates
+# Use this when your domain is proxied through Cloudflare
+
+{$DOMAIN:localhost} {
+    # Manual TLS configuration using Cloudflare Origin Certificate
+    tls /etc/caddy/certs/origin-cert.pem /etc/caddy/certs/origin-key.pem
+
+    # Reverse proxy to dashboard container
+    reverse_proxy dashboard:8080
+
+    # Security headers
+    header {
+        # HSTS - Force HTTPS for 1 year
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Remove Server header
+        -Server
+    }
+
+    # Enable gzip compression for faster loading
+    encode gzip
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+        level INFO
+    }
+
+    # Error logging
+    log {
+        output file /var/log/caddy/error.log
+        format json
+        level ERROR
+    }
+}

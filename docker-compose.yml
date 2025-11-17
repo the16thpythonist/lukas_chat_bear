@@ -56,10 +56,10 @@ services:
     environment:
       - SESSION_DIR=/app/sessions
       - FLASK_ENV=production
-      - SESSION_COOKIE_SECURE=false  # Allow HTTP access (set to 'true' if using HTTPS)
+      - SESSION_COOKIE_SECURE=false  # Disable secure cookies (HTTP only)
       - BOT_API_URL=http://lukas-bear-bot:5001  # Internal API endpoint for bot communication
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"  # Only expose to Docker network (Caddy handles external access)
     depends_on:
       - lukas-bot
     networks:
@@ -71,6 +71,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Reverse Proxy: Caddy (HTTP only - no TLS)
+  caddy:
+    image: caddy:2-alpine
+    container_name: lukas-caddy
+    ports:
+      - "8080:80"       # HTTP only
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      # HTTP-only configuration
+      - ./docker/Caddyfile.http:/etc/caddy/Caddyfile:ro
+      # Persistent storage
+      - caddy-config:/config          # Caddy internal configuration
+      - caddy-logs:/var/log/caddy     # Access and error logs
+    networks:
+      - lukas-network
+    depends_on:
+      - dashboard
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
     logging:
       driver: "json-file"
       options:
@@ -109,3 +140,5 @@ networks:
 volumes:
   dashboard-sessions:
   dashboard-thumbnails:
+  caddy-config:     # Caddy internal configuration
+  caddy-logs:       # Access and error logs

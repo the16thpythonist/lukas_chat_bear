@@ -1,0 +1,45 @@
+# Caddy configuration for Lukas Bear Bot Dashboard
+# Automatic HTTPS with Let's Encrypt
+
+# Replace {$DOMAIN} with your actual domain in .env file
+# For local testing without a domain, use localhost
+{$DOMAIN:localhost} {
+    # Reverse proxy to dashboard container
+    reverse_proxy dashboard:8080
+
+    # Security headers
+    header {
+        # HSTS - Force HTTPS for 1 year
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Remove Server header
+        -Server
+    }
+
+    # Enable gzip compression for faster loading
+    encode gzip
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+        level INFO
+    }
+
+    # Error logging
+    log {
+        output file /var/log/caddy/error.log
+        format json
+        level ERROR
+    }
+}
+
+# Optional: Explicit HTTP to HTTPS redirect (automatic when domain is set)
+# http://{$DOMAIN} {
+#     redir https://{$DOMAIN}{uri} permanent
+# }

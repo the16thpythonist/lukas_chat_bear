@@ -3,6 +3,11 @@
 
 FROM python:3.11-slim
 
+# Platform detection to prevent cross-architecture cache reuse
+# This forces Docker to rebuild when switching between x86_64 and ARM
+ARG TARGETPLATFORM
+RUN echo "Building for platform: ${TARGETPLATFORM}"
+
 # Set working directory
 WORKDIR /app
 
@@ -12,12 +17,16 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager, which is the preferred solution 
+# Install uv package manager, which is the preferred solution
 # in the modern python ecosystem.
 RUN pip install --no-cache-dir uv
 
-# Copy dependency files. These are all the files which need to 
-# be present in the root directory of the container for the code 
+# Explicitly install pytz first to ensure it's available for ARM builds
+# This prevents architecture-specific caching issues
+RUN pip install --no-cache-dir pytz>=2023.3
+
+# Copy dependency files. These are all the files which need to
+# be present in the root directory of the container for the code
 # to run.
 COPY pyproject.toml ./
 COPY README.md ./

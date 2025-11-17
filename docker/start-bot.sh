@@ -67,6 +67,11 @@ echo ""
 echo "🤖 Starting Slack Bot..."
 echo "   Mode: Socket Mode (no incoming ports needed)"
 
+# Unset OAuth credentials for bot process to prevent OAuth mode
+# (These are only needed for dashboard OAuth, not Socket Mode bot)
+unset SLACK_CLIENT_ID
+unset SLACK_CLIENT_SECRET
+
 # Run bot in foreground (this will block)
 python -m src.bot
 

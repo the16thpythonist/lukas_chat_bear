@@ -17,10 +17,14 @@ from src.utils.database import check_db_connection, get_db
 
 
 # Initialize Slack app (ASYNC)
+# Explicitly disable OAuth to use token-based auth for Socket Mode
+# (OAuth credentials in .env are kept for future multi-workspace support)
+#
+# IMPORTANT: Don't pass installation_store or oauth_settings at all
+# (even as None) when SLACK_CLIENT_ID/SECRET are in environment,
+# as Slack Bolt will auto-enable OAuth mode. Instead, only pass token.
 app = AsyncApp(
     token=os.getenv("SLACK_BOT_TOKEN"),
-    # Signing secret not needed for Socket Mode, but kept for future Events API support
-    signing_secret=os.getenv("SLACK_SIGNING_SECRET", ""),
 )
 
 
